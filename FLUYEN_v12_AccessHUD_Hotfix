@@ -1,0 +1,3628 @@
+--[[
+  FLUYEN HUD MENU - DELTA UNIVERSAL EDITION v4.0
+  Complete rewrite for Delta executor (Android/Mobile)
+  All functions working | All tabs | Full compatibility
+]]
+
+-- ============================================================
+-- POLYFILL: task library for Delta executor
+-- Delta does NOT have task.spawn/task.wait/task.delay
+-- It HAS legacy globals: wait(), spawn(), delay()
+-- ============================================================
+local _taskOk = false
+pcall(function() local _ = task _taskOk = true end)
+
+local _wait
+_wait = function(t)
+    t = t or 0
+    local ok, _ = pcall(function() wait(t) end)
+    if ok then return end
+    if _taskOk then
+        ok, _ = pcall(function() task.wait(t) end)
+        if ok then return end
+    end
+    local t0 = tick() while tick() - t0 < t do end
+end
+
+local _spawn
+_spawn = function(f)
+    local ok, _ = pcall(function() spawn(f) end)
+    if ok then return end
+    if _taskOk then
+        ok, _ = pcall(function() task.spawn(f) end)
+        if ok then return end
+    end
+    pcall(function() coroutine.wrap(f)() end)
+end
+
+local _delay
+_delay = function(t, f)
+    t = t or 0
+    local ok, _ = pcall(function() delay(t, f) end)
+    if ok then return end
+    if _taskOk then
+        ok, _ = pcall(function() task.delay(t, f) end)
+        if ok then return end
+    end
+    _spawn(function() _wait(t) f() end)
+end
+
+-- ============================================================
+-- MAIN SCRIPT - pcall wrapper for crash protection
+-- ============================================================
+local _ok, _err = pcall(function()
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local camera = Workspace.CurrentCamera
+pcall(function()
+    Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+        camera = Workspace.CurrentCamera or camera
+    end)
+end)
+
+-- Anti-detection
+pcall(function()
+    if getconnections then
+        for _, conn in pairs(getconnections(game:GetService("ScriptContext").Error)) do
+            if conn.Disable then conn:Disable() end
+        end
+    end
+end)
+
+-- Config
+local SCRIPT_NAME = "FLUYEN"
+local SCRIPT_VERSION = "v12.0 ACCESS HUD"
+
+-- States
+local States = {
+    ESP=false, BoxESP=false, NameESP=false, HealthESP=false, DistanceESP=false,
+    Tracers=false, MonsterESP=false, ItemESP=false, Chams=false, FullBright=false,
+    Aim=false, SilentAim=false, AimFOV=false, AimPrediction=false, TriggerBot=false, HitboxExpander=false,
+    KillAura=false, KillAll=false, KillTarget=false,
+    Speed=false, Fly=false, Noclip=false, JumpPower=false, InfiniteJump=false, ClickTeleport=false, Sprint=false, AntiVoid=false,
+    AntiAFK=false, FreezeTime=false, FPSBoost=false,
+    Spin=false, Float=false, Bang=false, Fling=false, Orbit=false, Invisible=false,
+    AutoLoadSettings=false, MinimizeButton=true, DraggableGUI=true, Notifications=true,
+}
+local DefaultStates = {}
+for _key, _value in pairs(States) do DefaultStates[_key] = _value end
+
+-- Access gate: ADMIN gets the Admin report tab; FREE gets the normal feature set.
+local ADMIN_KEY = "khanhhuy"
+local FREE_KEY = "free333"
+local REQUIRED_KEY = ADMIN_KEY -- backward-compatible alias
+local KeyAuthenticated = false
+local AdminAuthenticated = false
+local AccessLevel = "LOCKED"
+local ReportInbox = {}
+local ReportSequence = 0
+
+-- Values
+local Values = {
+    SpeedValue=16, FlySpeed=50, JumpPowerValue=50, SprintSpeed=24,
+    SpinSpeed=10, AimFOVValue=90, AimSmoothness=50, HitboxSize=10,
+    OrbitRadius=5, OrbitSpeed=1,
+    TargetName="", KillAuraRange=25, WorldESPRange=300,
+}
+
+-- Connections storage
+local Conns = {}
+local function killConn(name)
+    if Conns[name] then
+        pcall(function() Conns[name]:Disconnect() end)
+        Conns[name] = nil
+    end
+end
+local function setConn(name, conn)
+    killConn(name)
+    Conns[name] = conn
+end
+
+-- Theme system
+local currentTheme = "Neon"
+local Themes = {
+    Dark = {
+        bg=Color3.fromRGB(25,25,30), sidebar=Color3.fromRGB(20,20,25),
+        tabActive=Color3.fromRGB(40,40,48), tabInactive=Color3.fromRGB(20,20,25),
+        accent=Color3.fromRGB(255,107,53), accentDark=Color3.fromRGB(200,80,40),
+        text=Color3.fromRGB(240,240,245), textDim=Color3.fromRGB(140,140,150),
+        checkboxBg=Color3.fromRGB(45,45,55), checkboxOn=Color3.fromRGB(255,107,53),
+        sliderTrack=Color3.fromRGB(50,50,60), sliderFill=Color3.fromRGB(255,107,53),
+        btnBg=Color3.fromRGB(40,40,50), btnHover=Color3.fromRGB(55,55,65),
+        dropdownBg=Color3.fromRGB(35,35,45), pageBg=Color3.fromRGB(25,25,30),
+        border=Color3.fromRGB(50,50,60),
+    },
+    Light = {
+        bg=Color3.fromRGB(245,245,250), sidebar=Color3.fromRGB(230,230,235),
+        tabActive=Color3.fromRGB(255,255,255), tabInactive=Color3.fromRGB(230,230,235),
+        accent=Color3.fromRGB(255,107,53), accentDark=Color3.fromRGB(200,80,40),
+        text=Color3.fromRGB(30,30,35), textDim=Color3.fromRGB(100,100,110),
+        checkboxBg=Color3.fromRGB(220,220,225), checkboxOn=Color3.fromRGB(255,107,53),
+        sliderTrack=Color3.fromRGB(210,210,215), sliderFill=Color3.fromRGB(255,107,53),
+        btnBg=Color3.fromRGB(230,230,235), btnHover=Color3.fromRGB(240,240,245),
+        dropdownBg=Color3.fromRGB(225,225,230), pageBg=Color3.fromRGB(245,245,250),
+        border=Color3.fromRGB(200,200,210),
+    },
+    SkyBlue = {
+        bg=Color3.fromRGB(20,25,40), sidebar=Color3.fromRGB(15,20,35),
+        tabActive=Color3.fromRGB(30,40,60), tabInactive=Color3.fromRGB(15,20,35),
+        accent=Color3.fromRGB(80,180,255), accentDark=Color3.fromRGB(60,140,200),
+        text=Color3.fromRGB(230,240,255), textDim=Color3.fromRGB(120,140,170),
+        checkboxBg=Color3.fromRGB(35,45,65), checkboxOn=Color3.fromRGB(80,180,255),
+        sliderTrack=Color3.fromRGB(40,50,70), sliderFill=Color3.fromRGB(80,180,255),
+        btnBg=Color3.fromRGB(30,40,60), btnHover=Color3.fromRGB(40,50,75),
+        dropdownBg=Color3.fromRGB(25,35,55), pageBg=Color3.fromRGB(20,25,40),
+        border=Color3.fromRGB(40,55,80),
+    },
+    Galaxy = {
+        bg=Color3.fromRGB(15,10,30), sidebar=Color3.fromRGB(10,8,25),
+        tabActive=Color3.fromRGB(30,20,55), tabInactive=Color3.fromRGB(10,8,25),
+        accent=Color3.fromRGB(180,100,255), accentDark=Color3.fromRGB(140,70,200),
+        text=Color3.fromRGB(230,220,255), textDim=Color3.fromRGB(120,110,150),
+        checkboxBg=Color3.fromRGB(35,25,55), checkboxOn=Color3.fromRGB(180,100,255),
+        sliderTrack=Color3.fromRGB(40,30,60), sliderFill=Color3.fromRGB(180,100,255),
+        btnBg=Color3.fromRGB(30,20,50), btnHover=Color3.fromRGB(40,30,65),
+        dropdownBg=Color3.fromRGB(25,18,45), pageBg=Color3.fromRGB(15,10,30),
+        border=Color3.fromRGB(50,35,80),
+    },
+    Neon = {
+        bg=Color3.fromRGB(7,11,22), sidebar=Color3.fromRGB(5,9,18),
+        tabActive=Color3.fromRGB(14,35,55), tabInactive=Color3.fromRGB(5,9,18),
+        accent=Color3.fromRGB(0,229,255), accentDark=Color3.fromRGB(0,145,190),
+        text=Color3.fromRGB(232,250,255), textDim=Color3.fromRGB(104,155,174),
+        checkboxBg=Color3.fromRGB(10,30,44), checkboxOn=Color3.fromRGB(0,229,255),
+        sliderTrack=Color3.fromRGB(12,37,54), sliderFill=Color3.fromRGB(0,229,255),
+        btnBg=Color3.fromRGB(9,21,34), btnHover=Color3.fromRGB(14,45,61),
+        dropdownBg=Color3.fromRGB(8,26,40), pageBg=Color3.fromRGB(7,14,27),
+        border=Color3.fromRGB(18,77,100),
+    },
+}
+
+local function getTheme()
+    return Themes[currentTheme] or Themes.Dark
+end
+
+-- Language system
+local currentLang = "EN"
+local Langs = {
+    EN = {
+        Home="Home", Visual="Visual", Combat="Combat", Movement="Movement",
+        Utility="Utility", Server="Server", Fun="Fun", Settings="Settings",
+        ScriptName="Script Name", Version="Version", Username="Username",
+        Executor="Executor", Credits="Credits", Changelog="Changelog",
+        ESP="ESP", BoxESP="Box ESP", NameESP="Name ESP", HealthESP="Health ESP",
+        DistanceESP="Distance ESP", Tracers="Tracers", Chams="Chams/X-Ray", FullBright="Full Bright",
+        Aim="Aim", SilentAim="Silent Aim", AimFOV="Aim FOV", AimPrediction="Aim Prediction",
+        TriggerBot="Trigger Bot", HitboxExpander="Hitbox Expander",
+        Speed="Speed", Fly="Fly", Noclip="Noclip", JumpPower="Jump Power",
+        InfiniteJump="Infinite Jump", Teleport="Teleport", ClickTeleport="Click Teleport",
+        Sprint="Sprint", AntiVoid="Anti Void",
+        AntiAFK="Anti AFK", FreezeTime="Freeze Time", FPSBoost="FPS Booster",
+        RejoinServer="Rejoin Server", ServerHop="Server Hop", JoinSmallServer="Join Small Server",
+        PlayerList="Player List", SpectatePlayer="Spectate Player",
+        Spin="Spin", Float="Float", Bang="Bang", Fling="Fling",
+        OrbitPlayer="Orbit Player", Invisible="Invisible",
+        Theme="Theme", Language="Language", GUI="GUI",
+        SaveSettings="Save Settings", AutoLoadSettings="Auto Load Settings",
+        ResetSettings="Reset Settings", MinimizeButton="Minimize Button",
+        DraggableGUI="Draggable GUI", ToggleKeybind="Toggle Keybind", Notifications="Notifications",
+        SpeedValue="Speed", FlySpeed="Fly Speed", JumpPowerValue="Jump Power",
+        SprintSpeed="Sprint Speed", SpinSpeed="Spin Speed",
+        AimFOVValue="Aim FOV", AimSmoothness="Aim Smoothness",
+        HitboxSize="Hitbox Size", OrbitRadius="Orbit Radius", OrbitSpeed="Orbit Speed",
+        Dark="Dark", Light="Light", SkyBlue="Sky Blue",         Galaxy="Galaxy", Neon="Neon",
+        English="English", Vietnamese="Tieng Viet", Spanish="Espanol", Portuguese="Portugues", Russian="Russkiy",
+    },
+    VI = {
+        Home="Trang Chu", Visual="Hinh Anh", Combat="Chien Dau", Movement="Di Chuyen",
+        Utility="Tien Ich", Server="May Chu", Fun="Giai Tri", Settings="Cai Dat",
+        ScriptName="Ten Script", Version="Phien Ban", Username="Ten Nguoi Dung",
+        Executor="Trinh Thuc Thi", Credits="Tac Gia", Changelog="Nhat Ky",
+        ESP="ESP", BoxESP="Hop ESP", NameESP="Ten ESP", HealthESP="Mau ESP",
+        DistanceESP="Khoang Cach ESP", Tracers="Duong Dan", Chams="Chams/X-Ray", FullBright="Sang Toan Bo",
+        Aim="Ngam", SilentAim="Ngam Am", AimFOV="Ngam FOV", AimPrediction="Du Doan Ngam",
+        TriggerBot="Bot Ban", HitboxExpander="Mo Rong Hitbox",
+        Speed="Toc Do", Fly="Bay", Noclip="Xuyen Tuong", JumpPower="Luc Nhay",
+        InfiniteJump="Nhay Vo Han", Teleport="Dich Chuyen", ClickTeleport="Click Dich Chuyen",
+        Sprint="Chay Nhanh", AntiVoid="Chong Rot",
+        AntiAFK="Chong AFK", FreezeTime="Dong Thoi Gian", FPSBoost="Tang FPS",
+        RejoinServer="Vao Lai May Chu", ServerHop="Chuyen May Chu", JoinSmallServer="Vao May Chu Nho",
+        PlayerList="Danh Sach Nguoi Choi", SpectatePlayer="Theo Doi Nguoi Choi",
+        Spin="Xoay", Float="Bay Lang", Bang="Dam", Fling="Nem",
+        OrbitPlayer="Quay Quanh", Invisible="Vo Hinh",
+        Theme="Giao Dien", Language="Ngon Ngu", GUI="Giao Dien",
+        SaveSettings="Luu Cai Dat", AutoLoadSettings="Tu Dong Tai",
+        ResetSettings="Dat Lai Cai Dat", MinimizeButton="Nut Thu Nho",
+        DraggableGUI="Keo Duoc", ToggleKeybind="Phim Tat", Notifications="Thong Bao",
+        SpeedValue="Toc Do", FlySpeed="Toc Do Bay", JumpPowerValue="Luc Nhay",
+        SprintSpeed="Toc Do Chay", SpinSpeed="Toc Do Xoay",
+        AimFOVValue="Ngam FOV", AimSmoothness="Do Muot Ngam",
+        HitboxSize="Kich Thuoc Hitbox", OrbitRadius="Ban Kinh Quay", OrbitSpeed="Toc Do Quay",
+        Dark="Toi", Light="Sang", SkyBlue="Xanh Troi", Galaxy="Thien Ha",
+        English="English", Vietnamese="Tieng Viet", Spanish="Espanol", Portuguese="Portugues", Russian="Russkiy",
+    },
+    ES = {
+        Home="Inicio", Visual="Visual", Combat="Combate", Movement="Movimiento",
+        Utility="Utilidad", Server="Servidor", Fun="Diversion", Settings="Ajustes",
+        ScriptName="Nombre Script", Version="Version", Username="Usuario",
+        Executor="Ejecutor", Credits="Creditos", Changelog="Cambios",
+        ESP="ESP", BoxESP="Caja ESP", NameESP="Nombre ESP", HealthESP="Salud ESP",
+        DistanceESP="Distancia ESP", Tracers="Trazadores", Chams="Chams/Rayos X", FullBright="Luz Total",
+        Aim="Apuntar", SilentAim="Apuntar Silencioso", AimFOV="FOV Apuntado", AimPrediction="Prediccion",
+        TriggerBot="Bot Disparo", HitboxExpander="Expandir Hitbox",
+        Speed="Velocidad", Fly="Volar", Noclip="Noclip", JumpPower="Salto",
+        InfiniteJump="Salto Infinito", Teleport="Teletransporte", ClickTeleport="Click Teleport",
+        Sprint="Sprint", AntiVoid="Anti Vacio",
+        AntiAFK="Anti AFK", FreezeTime="Congelar Tiempo", FPSBoost="Mas FPS",
+        RejoinServer="Reconectar", ServerHop="Cambiar Servidor", JoinSmallServer="Servidor Pequeno",
+        PlayerList="Lista Jugadores", SpectatePlayer="Espectar",
+        Spin="Girar", Float="Flotar", Bang="Golpear", Fling="Lanzar",
+        OrbitPlayer="Orbitar", Invisible="Invisible",
+        Theme="Tema", Language="Idioma", GUI="Interfaz",
+        SaveSettings="Guardar", AutoLoadSettings="Auto Cargar",
+        ResetSettings="Reiniciar", MinimizeButton="Boton Minimizar",
+        DraggableGUI="Arrastrable", ToggleKeybind="Tecla Toggle", Notifications="Notificaciones",
+        SpeedValue="Velocidad", FlySpeed="Vel. Vuelo", JumpPowerValue="Salto",
+        SprintSpeed="Vel. Sprint", SpinSpeed="Vel. Giro",
+        AimFOVValue="FOV Apuntado", AimSmoothness="Suavidad",
+        HitboxSize="Tam. Hitbox", OrbitRadius="Radio Orbita", OrbitSpeed="Vel. Orbita",
+        Dark="Oscuro", Light="Claro", SkyBlue="Cielo Azul", Galaxy="Galaxia",
+        English="English", Vietnamese="Tieng Viet", Spanish="Espanol", Portuguese="Portugues", Russian="Russkiy",
+    },
+    PT = {
+        Home="Inicio", Visual="Visual", Combat="Combate", Movement="Movimento",
+        Utility="Utilidade", Server="Servidor", Fun="Diversao", Settings="Configuracoes",
+        ScriptName="Nome Script", Version="Versao", Username="Usuario",
+        Executor="Executor", Credits="Creditos", Changelog="Mudancas",
+        ESP="ESP", BoxESP="Caixa ESP", NameESP="Nome ESP", HealthESP="Saude ESP",
+        DistanceESP="Distancia ESP", Tracers="Rastreadores", Chams="Chams/Raios X", FullBright="Luz Total",
+        Aim="Mirar", SilentAim="Mira Silenciosa", AimFOV="FOV Mira", AimPrediction="Predicao",
+        TriggerBot="Bot Disparo", HitboxExpander="Expandir Hitbox",
+        Speed="Velocidade", Fly="Voar", Noclip="Noclip", JumpPower="Pulo",
+        InfiniteJump="Pulo Infinito", Teleport="Teleporte", ClickTeleport="Click Teleporte",
+        Sprint="Sprint", AntiVoid="Anti Vazio",
+        AntiAFK="Anti AFK", FreezeTime="Congelar Tempo", FPSBoost="Mais FPS",
+        RejoinServer="Reconectar", ServerHop="Trocar Servidor", JoinSmallServer="Servidor Pequeno",
+        PlayerList="Lista Jogadores", SpectatePlayer="Espectar",
+        Spin="Girar", Float="Flutuar", Bang="Bater", Fling="Arremessar",
+        OrbitPlayer="Orbitar", Invisible="Invisivel",
+        Theme="Tema", Language="Idioma", GUI="Interface",
+        SaveSettings="Salvar", AutoLoadSettings="Auto Carregar",
+        ResetSettings="Resetar", MinimizeButton="Botao Minimizar",
+        DraggableGUI="Arrastavel", ToggleKeybind="Tecla Toggle", Notifications="Notificacoes",
+        SpeedValue="Velocidade", FlySpeed="Vel. Voo", JumpPowerValue="Pulo",
+        SprintSpeed="Vel. Sprint", SpinSpeed="Vel. Giro",
+        AimFOVValue="FOV Mira", AimSmoothness="Suavidade",
+        HitboxSize="Tam. Hitbox", OrbitRadius="Raio Orbita", OrbitSpeed="Vel. Orbita",
+        Dark="Escuro", Light="Claro", SkyBlue="Ceu Azul", Galaxy="Galaxia",
+        English="English", Vietnamese="Tieng Viet", Spanish="Espanol", Portuguese="Portugues", Russian="Russkiy",
+    },
+    RU = {
+        Home="Glavnaya", Visual="Vizual", Combat="Boi", Movement="Dvizhenie",
+        Utility="Utilita", Server="Server", Fun="Razvlechenie", Settings="Nastroyki",
+        ScriptName="Imya Skripta", Version="Versiya", Username="Polzovatel",
+        Executor="Ispolnitel", Credits="Avtory", Changelog="Izmeneniya",
+        ESP="ESP", BoxESP="Boks ESP", NameESP="Imya ESP", HealthESP="Zdorove ESP",
+        DistanceESP="Rasstoyanie ESP", Tracers="Luch", Chams="Chams/Rentgen", FullBright="Yarkost",
+        Aim="Pricel", SilentAim="Tihii Pricel", AimFOV="Pricel FOV", AimPrediction="Predikciya",
+        TriggerBot="Trigger Bot", HitboxExpander="Hitboks",
+        Speed="Skorost", Fly="Polet", Noclip="Noklip", JumpPower="Prizhok",
+        InfiniteJump="Beskonechnii Prizhok", Teleport="Teleport", ClickTeleport="Klik Teleport",
+        Sprint="Sprint", AntiVoid="Anti Proval",
+        AntiAFK="Anti AFK", FreezeTime="Ostanovit Vremya", FPSBoost="FPS Bust",
+        RejoinServer="Pereiti", ServerHop="Smenit Server", JoinSmallServer="Malcii Server",
+        PlayerList="Spisok Igrokov", SpectatePlayer="Nablyudat",
+        Spin="Vrashenie", Float="Parit", Bang="Udar", Fling="Brosit",
+        OrbitPlayer="Orbita", Invisible="Nevidimost",
+        Theme="Tema", Language="Yazik", GUI="Interfeis",
+        SaveSettings="Sokhranit", AutoLoadSettings="Avtosapusk",
+        ResetSettings="Sbros", MinimizeButton="Knopka Svertki",
+        DraggableGUI="Peretaskivanie", ToggleKeybind="Klavisha", Notifications="Uvedomleniya",
+        SpeedValue="Skorost", FlySpeed="Skorost Poleta", JumpPowerValue="Sila Prizhka",
+        SprintSpeed="Skorost Sprinta", SpinSpeed="Skorost Vrasheniya",
+        AimFOVValue="Pricel FOV", AimSmoothness="Plavnost Pricela",
+        HitboxSize="Razmer Hitboksa", OrbitRadius="Radius Orbiy", OrbitSpeed="Skorost Orbiy",
+        Dark="Temnaya", Light="Svetlaya", SkyBlue="Nebesno-Golubaya", Galaxy="Galaktika",
+        English="English", Vietnamese="Tieng Viet", Spanish="Espanol", Portuguese="Portugues", Russian="Russkiy",
+    },
+}
+
+local function T(key)
+    local lang = Langs[currentLang] or Langs.EN
+    return lang[key] or key
+end
+
+local TextRegistry = {}
+local function findTextKey(text)
+    for _, lang in pairs(Langs) do
+        for key, value in pairs(lang) do
+            if value == text then return key end
+        end
+    end
+    return nil
+end
+
+local function registerText(object, text, valueKey)
+    local key = findTextKey(text)
+    if key then
+        TextRegistry[#TextRegistry + 1] = {object = object, key = key, valueKey = valueKey}
+    end
+end
+
+-- ============================================================
+-- NOTIFICATION SYSTEM
+-- ============================================================
+local function notify(title, content, duration)
+    duration = duration or 3
+    if States.Notifications == false then return end
+    _spawn(function()
+        pcall(function()
+            local theme = getTheme()
+            local notifGui = playerGui:FindFirstChild("FLUYEN_Noti_Gui")
+            if not notifGui then
+                notifGui = Instance.new("ScreenGui")
+                notifGui.Name = "FLUYEN_Noti_Gui"
+                notifGui.ResetOnSpawn = false
+                notifGui.Parent = playerGui
+            end
+
+            local notifFrame = Instance.new("Frame")
+            notifFrame.Name = "Notif_" .. math.random(10000,99999)
+            notifFrame.Size = UDim2.new(0, 260, 0, 60)
+            notifFrame.Position = UDim2.new(1, 280, 0, 10)
+            notifFrame.BackgroundColor3 = theme.bg
+            notifFrame.BorderSizePixel = 0
+            notifFrame.ZIndex = 100
+            notifFrame.Parent = notifGui
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 6)
+            corner.Parent = notifFrame
+
+            local accentBar = Instance.new("Frame")
+            accentBar.Size = UDim2.new(0, 4, 1, 0)
+            accentBar.BackgroundColor3 = theme.accent
+            accentBar.BorderSizePixel = 0
+            accentBar.ZIndex = 101
+            accentBar.Parent = notifFrame
+
+            local titleLabel = Instance.new("TextLabel")
+            titleLabel.Size = UDim2.new(1, -16, 0, 22)
+            titleLabel.Position = UDim2.new(0, 12, 0, 5)
+            titleLabel.BackgroundTransparency = 1
+            titleLabel.Text = title
+            titleLabel.TextColor3 = theme.text
+            titleLabel.Font = Enum.Font.GothamBold
+            titleLabel.TextSize = 13
+            titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+            titleLabel.ZIndex = 101
+            titleLabel.Parent = notifFrame
+
+            local contentLabel = Instance.new("TextLabel")
+            contentLabel.Size = UDim2.new(1, -16, 0, 20)
+            contentLabel.Position = UDim2.new(0, 12, 0, 30)
+            contentLabel.BackgroundTransparency = 1
+            contentLabel.Text = content
+            contentLabel.TextColor3 = theme.textDim
+            contentLabel.Font = Enum.Font.Gotham
+            contentLabel.TextSize = 11
+            contentLabel.TextXAlignment = Enum.TextXAlignment.Left
+            contentLabel.ZIndex = 101
+            contentLabel.Parent = notifFrame
+
+            -- Slide in
+            TweenService:Create(notifFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Position = UDim2.new(1, -280, 0, 10)
+            }):Play()
+            _wait(duration)
+
+            -- Slide out
+            TweenService:Create(notifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                Position = UDim2.new(1, 280, 0, 10)
+            }):Play()
+            _wait(0.35)
+            notifFrame:Destroy()
+        end)
+    end)
+end
+
+local statusPill
+local keyInputBox
+local keyStatusLabel
+local accessRoleLabel
+local deviceLabel
+local batteryLabel
+local aiPanel
+local aiText
+local aiBubble
+local aiStroke
+local aiHeader
+local updateAccessVisibility
+local updateAiForTab
+local updateAiForFeature
+local refreshAdminInbox
+
+local function updateAuthUi()
+    local theme = getTheme()
+    if statusPill then
+        if AccessLevel == "ADMIN" then
+            statusPill.Text = "●  ADMIN"
+            statusPill.TextColor3 = theme.accent
+        elseif AccessLevel == "FREE" then
+            statusPill.Text = "●  FREE"
+            statusPill.TextColor3 = Color3.fromRGB(100, 220, 160)
+        else
+            statusPill.Text = "●  LOCKED"
+            statusPill.TextColor3 = Color3.fromRGB(255, 170, 80)
+        end
+    end
+    if keyStatusLabel then
+        keyStatusLabel.Text = AccessLevel == "ADMIN" and "ADMIN ACCESS  /  REPORT CONSOLE ONLINE" or (AccessLevel == "FREE" and "FREE ACCESS  /  REPORTS SAVED LOCALLY" or "ACCESS LOCKED  /  ENTER KEY TO CONTINUE")
+        keyStatusLabel.TextColor3 = AccessLevel == "LOCKED" and theme.textDim or theme.accent
+    end
+    if accessRoleLabel then
+        accessRoleLabel.Text = AccessLevel == "ADMIN" and "ROLE: ADMINISTRATOR  •  REPORT CONSOLE ENABLED" or (AccessLevel == "FREE" and "ROLE: FREE USER  •  STANDARD MODULES ENABLED" or "ROLE: GUEST  •  MODULES STANDBY")
+        accessRoleLabel.TextColor3 = AccessLevel == "LOCKED" and theme.textDim or theme.accent
+    end
+end
+
+local function requestAccess(target)
+    notify("FLUYEN ACCESS", target == "Admin" and "Admin key required. Enter khanhhuy in Settings." or "Enter free333 or khanhhuy in Settings to unlock.", 3)
+end
+
+-- ============================================================
+-- GUI CREATION — FLUYEN V10 COMMAND CENTER
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FLUYEN_CommandCenter_" .. tostring(math.random(1000, 9999))
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 100
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+screenGui.Parent = playerGui
+
+local backdrop = Instance.new("Frame")
+backdrop.Name = "Backdrop"
+backdrop.Size = UDim2.new(1, 0, 1, 0)
+backdrop.BackgroundColor3 = Color3.fromRGB(5, 7, 12)
+backdrop.BackgroundTransparency = 1
+backdrop.BorderSizePixel = 0
+backdrop.Visible = false
+backdrop.ZIndex = 1
+backdrop.Parent = screenGui
+
+local backdropClose = Instance.new("TextButton")
+backdropClose.Size = UDim2.new(1, 0, 1, 0)
+backdropClose.BackgroundTransparency = 1
+backdropClose.Text = ""
+backdropClose.AutoButtonColor = false
+backdropClose.ZIndex = 1
+backdropClose.Parent = backdrop
+
+local MENU_W, MENU_H = 720, 540
+local function getMenuSize()
+    local viewport = (camera and camera.ViewportSize) or Vector2.new(MENU_W, MENU_H)
+    local width = math.min(MENU_W, math.max(330, viewport.X - 16))
+    local height = math.min(MENU_H, math.max(300, viewport.Y - 22))
+    return width, height
+end
+
+local mainFrame = Instance.new("Frame")
+local initialW, initialH = getMenuSize()
+mainFrame.Name = "CommandCenter"
+mainFrame.Size = UDim2.fromOffset(initialW, initialH)
+mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+mainFrame.BackgroundColor3 = getTheme().bg
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Active = true
+mainFrame.Visible = false
+mainFrame.ZIndex = 2
+mainFrame.Parent = screenGui
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 20)
+mainCorner.Parent = mainFrame
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Name = "PanelStroke"
+mainStroke.Thickness = 1
+mainStroke.Color = getTheme().border
+mainStroke.Transparency = 0.04
+mainStroke.Parent = mainFrame
+local sizeConstraint = Instance.new("UISizeConstraint")
+sizeConstraint.MinSize = Vector2.new(330, 300)
+sizeConstraint.MaxSize = Vector2.new(720, 540)
+sizeConstraint.Parent = mainFrame
+
+local shadowFrame = Instance.new("Frame")
+shadowFrame.Name = "CommandShadow"
+shadowFrame.Size = UDim2.fromOffset(initialW + 24, initialH + 24)
+shadowFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+shadowFrame.Position = UDim2.new(0.5, 0, 0.5, 10)
+shadowFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+shadowFrame.BackgroundTransparency = 0.48
+shadowFrame.BorderSizePixel = 0
+shadowFrame.Visible = false
+shadowFrame.ZIndex = 1
+shadowFrame.Parent = screenGui
+local shadowCorner = Instance.new("UICorner")
+shadowCorner.CornerRadius = UDim.new(0, 24)
+shadowCorner.Parent = shadowFrame
+
+local uiScale = Instance.new("UIScale")
+uiScale.Scale = 1
+uiScale.Parent = mainFrame
+
+local sidebar
+local contentArea
+local miniBtn
+local espLineGui
+local pageTitles = {}
+local tabButtons = {}
+local pages = {}
+local StateCallbacks = {}
+local CheckboxRefs = {}
+local currentTab = "Home"
+
+local function getSidebarWidth()
+    local width = mainFrame.AbsoluteSize.X
+    return width < 500 and 70 or 112
+end
+
+-- Header: command-center strip with identity, session status and window controls.
+local titleBar = Instance.new("Frame")
+titleBar.Name = "CommandHeader"
+titleBar.Size = UDim2.new(1, 0, 0, 72)
+titleBar.BackgroundColor3 = getTheme().bg
+titleBar.BorderSizePixel = 0
+titleBar.ZIndex = 10
+titleBar.Parent = mainFrame
+local headerGradient = Instance.new("UIGradient")
+headerGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, getTheme().bg),
+    ColorSequenceKeypoint.new(0.6, getTheme().bg),
+    ColorSequenceKeypoint.new(1, getTheme().sidebar),
+})
+headerGradient.Rotation = 0
+headerGradient.Parent = titleBar
+
+local brandMark = Instance.new("Frame")
+brandMark.Size = UDim2.new(0, 7, 0, 42)
+brandMark.Position = UDim2.new(0, 18, 0, 15)
+brandMark.BackgroundColor3 = getTheme().accent
+brandMark.BorderSizePixel = 0
+brandMark.ZIndex = 12
+brandMark.Parent = titleBar
+Instance.new("UICorner", brandMark).CornerRadius = UDim.new(0, 4)
+
+local kickerLabel = Instance.new("TextLabel")
+kickerLabel.Size = UDim2.new(1, -260, 0, 12)
+kickerLabel.Position = UDim2.new(0, 36, 0, 12)
+kickerLabel.BackgroundTransparency = 1
+kickerLabel.Text = "COMMAND CENTER  /  SESSION ONLINE"
+kickerLabel.TextColor3 = getTheme().textDim
+kickerLabel.Font = Enum.Font.GothamBold
+kickerLabel.TextSize = 8
+kickerLabel.TextXAlignment = Enum.TextXAlignment.Left
+kickerLabel.ZIndex = 11
+kickerLabel.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "BrandTitle"
+titleLabel.Size = UDim2.new(1, -270, 0, 25)
+titleLabel.Position = UDim2.new(0, 35, 0, 25)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "FLUYEN"
+titleLabel.TextColor3 = getTheme().text
+titleLabel.Font = Enum.Font.GothamBlack
+titleLabel.TextSize = 22
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.ZIndex = 11
+titleLabel.Parent = titleBar
+
+local subtitleLabel = Instance.new("TextLabel")
+subtitleLabel.Name = "BrandSubtitle"
+subtitleLabel.Size = UDim2.new(1, -270, 0, 12)
+subtitleLabel.Position = UDim2.new(0, 36, 0, 51)
+subtitleLabel.BackgroundTransparency = 1
+subtitleLabel.Text = "UNIVERSAL CONTROL  /  " .. SCRIPT_VERSION
+subtitleLabel.TextColor3 = getTheme().textDim
+subtitleLabel.Font = Enum.Font.GothamMedium
+subtitleLabel.TextSize = 8
+subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+subtitleLabel.ZIndex = 11
+subtitleLabel.Parent = titleBar
+
+deviceLabel = Instance.new("TextLabel")
+deviceLabel.Name = "DeviceStatus"
+deviceLabel.Size = UDim2.new(0, 150, 0, 16)
+deviceLabel.Position = UDim2.new(0, 160, 0, 30)
+deviceLabel.BackgroundTransparency = 1
+deviceLabel.Text = "DEVICE  /  DETECTING"
+deviceLabel.TextColor3 = getTheme().accent
+deviceLabel.Font = Enum.Font.GothamBold
+deviceLabel.TextSize = 8
+deviceLabel.TextXAlignment = Enum.TextXAlignment.Left
+deviceLabel.ZIndex = 12
+deviceLabel.Parent = titleBar
+batteryLabel = Instance.new("TextLabel")
+batteryLabel.Name = "BatteryStatus"
+batteryLabel.Size = UDim2.new(0, 110, 0, 16)
+batteryLabel.Position = UDim2.new(0, 315, 0, 30)
+batteryLabel.BackgroundTransparency = 1
+batteryLabel.Text = "BATTERY  /  --"
+batteryLabel.TextColor3 = getTheme().textDim
+batteryLabel.Font = Enum.Font.GothamMedium
+batteryLabel.TextSize = 8
+batteryLabel.TextXAlignment = Enum.TextXAlignment.Left
+batteryLabel.ZIndex = 12
+batteryLabel.Parent = titleBar
+
+statusPill = Instance.new("TextLabel")
+statusPill.Name = "RuntimeStatus"
+statusPill.Size = UDim2.new(0, 112, 0, 24)
+statusPill.Position = UDim2.new(1, -166, 0, 24)
+statusPill.BackgroundColor3 = getTheme().tabActive
+statusPill.BackgroundTransparency = 0.02
+statusPill.Text = "●  LOCKED"
+statusPill.TextColor3 = Color3.fromRGB(255, 170, 80)
+statusPill.Font = Enum.Font.GothamBold
+statusPill.TextSize = 9
+statusPill.ZIndex = 11
+statusPill.Parent = titleBar
+Instance.new("UICorner", statusPill).CornerRadius = UDim.new(0, 12)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "CloseButton"
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -42, 0, 21)
+closeBtn.BackgroundColor3 = getTheme().tabActive
+closeBtn.BackgroundTransparency = 0.05
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "×"
+closeBtn.TextColor3 = getTheme().textDim
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 18
+closeBtn.AutoButtonColor = false
+closeBtn.ZIndex = 12
+closeBtn.Parent = titleBar
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 10)
+
+local headerLine = Instance.new("Frame")
+headerLine.Name = "HeaderLine"
+headerLine.Size = UDim2.new(1, -36, 0, 1)
+headerLine.Position = UDim2.new(0, 18, 1, -1)
+headerLine.BackgroundColor3 = getTheme().border
+headerLine.BackgroundTransparency = 0.1
+headerLine.BorderSizePixel = 0
+headerLine.ZIndex = 12
+headerLine.Parent = titleBar
+
+-- Futuristic HUD effects: lightweight layers, no per-element tween loops.
+local neonSweep = Instance.new("Frame")
+neonSweep.Name = "NeonSweep"
+neonSweep.Size = UDim2.new(0, 2, 1, 0)
+neonSweep.Position = UDim2.new(0, -2, 0, 0)
+neonSweep.BackgroundColor3 = getTheme().accent
+neonSweep.BackgroundTransparency = 0.58
+neonSweep.BorderSizePixel = 0
+neonSweep.ZIndex = 13
+neonSweep.Parent = titleBar
+local sweepGlow = Instance.new("UIGradient")
+sweepGlow.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
+    ColorSequenceKeypoint.new(0.5, getTheme().accent),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255)),
+})
+sweepGlow.Rotation = 90
+sweepGlow.Parent = neonSweep
+
+local cornerMarks = {}
+local function addCornerMark(position, size, anchor)
+    local mark = Instance.new("Frame")
+    mark.Size = size
+    mark.Position = position
+    mark.AnchorPoint = anchor or Vector2.new(0, 0)
+    mark.BackgroundColor3 = getTheme().accent
+    mark.BackgroundTransparency = 0.18
+    mark.BorderSizePixel = 0
+    mark.ZIndex = 20
+    mark.Parent = mainFrame
+    table.insert(cornerMarks, mark)
+    return mark
+end
+addCornerMark(UDim2.new(0, 11, 0, 11), UDim2.new(0, 28, 0, 2))
+addCornerMark(UDim2.new(0, 11, 0, 11), UDim2.new(0, 2, 0, 28))
+addCornerMark(UDim2.new(1, -11, 0, 11), UDim2.new(0, 28, 0, 2), Vector2.new(1, 0))
+addCornerMark(UDim2.new(1, -11, 0, 11), UDim2.new(0, 2, 0, 28), Vector2.new(1, 0))
+addCornerMark(UDim2.new(0, 11, 1, -11), UDim2.new(0, 28, 0, 2), Vector2.new(0, 1))
+addCornerMark(UDim2.new(0, 11, 1, -11), UDim2.new(0, 2, 0, 28), Vector2.new(0, 1))
+addCornerMark(UDim2.new(1, -11, 1, -11), UDim2.new(0, 28, 0, 2), Vector2.new(1, 1))
+addCornerMark(UDim2.new(1, -11, 1, -11), UDim2.new(0, 2, 0, 28), Vector2.new(1, 1))
+
+closeBtn.MouseEnter:Connect(function()
+    closeBtn.BackgroundColor3 = getTheme().accent
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+end)
+closeBtn.MouseLeave:Connect(function()
+    closeBtn.BackgroundColor3 = getTheme().tabActive
+    closeBtn.TextColor3 = getTheme().textDim
+end)
+
+-- Icon rail + workspace canvas: intentionally different from the previous sidebar/card shell.
+sidebar = Instance.new("Frame")
+sidebar.Name = "IconRail"
+sidebar.BackgroundColor3 = getTheme().sidebar
+sidebar.BorderSizePixel = 0
+sidebar.ZIndex = 5
+sidebar.Parent = mainFrame
+local sidebarStroke = Instance.new("UIStroke")
+sidebarStroke.Color = getTheme().border
+sidebarStroke.Transparency = 0.35
+sidebarStroke.Thickness = 1
+sidebarStroke.Parent = sidebar
+local railLogo = Instance.new("TextLabel")
+railLogo.Name = "RailLogo"
+railLogo.Size = UDim2.new(1, -20, 0, 42)
+railLogo.Position = UDim2.new(0, 10, 0, 14)
+railLogo.BackgroundColor3 = getTheme().accent
+railLogo.Text = "F"
+railLogo.TextColor3 = Color3.fromRGB(255, 255, 255)
+railLogo.Font = Enum.Font.GothamBlack
+railLogo.TextSize = 20
+railLogo.ZIndex = 8
+railLogo.Parent = sidebar
+railLogo.LayoutOrder = -100
+Instance.new("UICorner", railLogo).CornerRadius = UDim.new(0, 13)
+local railCaption = Instance.new("TextLabel")
+railCaption.Size = UDim2.new(1, -8, 0, 12)
+railCaption.Position = UDim2.new(0, 4, 0, 61)
+railCaption.BackgroundTransparency = 1
+railCaption.Text = "FLUYEN"
+railCaption.TextColor3 = getTheme().textDim
+railCaption.Font = Enum.Font.GothamBold
+railCaption.TextSize = 7
+railCaption.ZIndex = 8
+railCaption.Parent = sidebar
+railCaption.LayoutOrder = -99
+local sidebarLayout = Instance.new("UIListLayout")
+sidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+sidebarLayout.Padding = UDim.new(0, 6)
+sidebarLayout.Parent = sidebar
+local sidebarPad = Instance.new("UIPadding")
+sidebarPad.PaddingTop = UDim.new(0, 10)
+sidebarPad.PaddingLeft = UDim.new(0, 10)
+sidebarPad.PaddingRight = UDim.new(0, 10)
+sidebarPad.Parent = sidebar
+
+contentArea = Instance.new("Frame")
+contentArea.Name = "Workspace"
+contentArea.BackgroundColor3 = getTheme().pageBg
+contentArea.BorderSizePixel = 0
+contentArea.ClipsDescendants = true
+contentArea.ZIndex = 5
+contentArea.Parent = mainFrame
+local workspaceStroke = Instance.new("UIStroke")
+workspaceStroke.Color = getTheme().border
+workspaceStroke.Transparency = 0.6
+workspaceStroke.Thickness = 1
+workspaceStroke.Parent = contentArea
+
+local hudGridV = Instance.new("Frame")
+hudGridV.Name = "HUDGridV"
+hudGridV.Size = UDim2.new(0, 1, 1, 0)
+hudGridV.Position = UDim2.new(0.32, 0, 0, 0)
+hudGridV.BackgroundColor3 = getTheme().accent
+hudGridV.BackgroundTransparency = 0.92
+hudGridV.BorderSizePixel = 0
+hudGridV.ZIndex = 7
+hudGridV.Parent = contentArea
+local hudGridH = Instance.new("Frame")
+hudGridH.Name = "HUDGridH"
+hudGridH.Size = UDim2.new(1, 0, 0, 1)
+hudGridH.Position = UDim2.new(0, 0, 0.22, 0)
+hudGridH.BackgroundColor3 = getTheme().accent
+hudGridH.BackgroundTransparency = 0.93
+hudGridH.BorderSizePixel = 0
+hudGridH.ZIndex = 7
+hudGridH.Parent = contentArea
+
+local TabDefs = {
+    {name="Home", icon="⌂", order=1}, {name="Visual", icon="◈", order=2},
+    {name="Combat", icon="◎", order=3}, {name="Movement", icon="↗", order=4},
+    {name="Utility", icon="✦", order=5}, {name="Server", icon="◌", order=6},
+    {name="Fun", icon="☆", order=7}, {name="Settings", icon="⚙", order=8},
+    {name="Admin", icon="⌘", order=9},
+}
+
+local function fitMenuToViewport()
+    local width, height = getMenuSize()
+    mainFrame.Size = UDim2.fromOffset(width, height)
+    shadowFrame.Size = UDim2.fromOffset(width + 24, height + 24)
+    if sidebar and contentArea then
+        local sideWidth = getSidebarWidth()
+        sidebar.Size = UDim2.new(0, sideWidth, 1, -72)
+        sidebar.Position = UDim2.new(0, 0, 0, 72)
+        contentArea.Size = UDim2.new(1, -sideWidth, 1, -72)
+        contentArea.Position = UDim2.new(0, sideWidth, 0, 72)
+    end
+    local compact = width < 500
+    if statusPill then statusPill.Visible = not compact end
+    if deviceLabel then deviceLabel.Visible = not compact end
+    if batteryLabel then batteryLabel.Visible = not compact end
+    if aiPanel then
+        aiPanel.Size = UDim2.new(0, compact and 205 or 244, 0, 88)
+        aiPanel.Position = UDim2.new(1, compact and -10 or -18, 1, compact and -10 or -18)
+    end
+    if aiBubble then aiBubble.Position = UDim2.new(1, compact and -10 or -18, 1, compact and -10 or -18) end
+    for name, button in pairs(tabButtons) do
+        local defText = name
+        for _, def in ipairs(TabDefs) do
+            if def.name == name then
+                defText = compact and def.icon or (def.icon .. "  " .. T(name))
+                break
+            end
+        end
+        button.Text = defText
+        button.TextXAlignment = compact and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left
+        button.TextSize = compact and 18 or 10
+        local pad = button:FindFirstChild("TabPadding")
+        if pad then pad.PaddingLeft = compact and UDim.new(0, 0) or UDim.new(0, 11) end
+    end
+end
+
+for _, tabDef in ipairs(TabDefs) do
+    local name = tabDef.name
+    local page = Instance.new("ScrollingFrame")
+    page.Name = "Page_" .. name
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 4
+    page.ScrollBarImageColor3 = getTheme().accent
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.Visible = name == "Home"
+    page.ZIndex = 6
+    page.Parent = contentArea
+    pcall(function()
+        page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        page.ScrollingDirection = Enum.ScrollingDirection.Y
+    end)
+    local pageLayout = Instance.new("UIListLayout")
+    pageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    pageLayout.Padding = UDim.new(0, 10)
+    pageLayout.Parent = page
+    local pagePad = Instance.new("UIPadding")
+    pagePad.PaddingTop = UDim.new(0, 18)
+    pagePad.PaddingLeft = UDim.new(0, 20)
+    pagePad.PaddingRight = UDim.new(0, 20)
+    pagePad.PaddingBottom = UDim.new(0, 22)
+    pagePad.Parent = page
+    local heading = Instance.new("Frame")
+    heading.Name = "PageHeading"
+    heading.Size = UDim2.new(1, 0, 0, 54)
+    heading.BackgroundTransparency = 1
+    heading.ZIndex = 7
+    heading.Parent = page
+    local headingTitle = Instance.new("TextLabel")
+    headingTitle.Name = "HeadingTitle"
+    headingTitle.Size = UDim2.new(1, 0, 0, 28)
+    headingTitle.BackgroundTransparency = 1
+    headingTitle.Text = T(name)
+    headingTitle.TextColor3 = getTheme().text
+    headingTitle.Font = Enum.Font.GothamBlack
+    headingTitle.TextSize = 20
+    headingTitle.TextXAlignment = Enum.TextXAlignment.Left
+    headingTitle.ZIndex = 8
+    headingTitle.Parent = heading
+    registerText(headingTitle, T(name))
+    local headingSub = Instance.new("TextLabel")
+    headingSub.Size = UDim2.new(1, 0, 0, 16)
+    headingSub.Position = UDim2.new(0, 0, 0, 32)
+    headingSub.BackgroundTransparency = 1
+    headingSub.Text = "WORKSPACE  /  " .. string.upper(name) .. "  /  " .. SCRIPT_VERSION
+    headingSub.TextColor3 = getTheme().textDim
+    headingSub.Font = Enum.Font.GothamMedium
+    headingSub.TextSize = 8
+    headingSub.TextXAlignment = Enum.TextXAlignment.Left
+    headingSub.ZIndex = 8
+    headingSub.Parent = heading
+    if name == "Home" then
+        local hero = Instance.new("Frame")
+        hero.Name = "NeonHero"
+        hero.Size = UDim2.new(1, 0, 0, 72)
+        hero.BackgroundColor3 = getTheme().btnBg
+        hero.BorderSizePixel = 0
+        hero.ZIndex = 7
+        hero.Parent = page
+        hero:SetAttribute("FLUYENRole", "card")
+        Instance.new("UICorner", hero).CornerRadius = UDim.new(0, 14)
+        local heroStroke = Instance.new("UIStroke")
+        heroStroke.Color = getTheme().accent
+        heroStroke.Transparency = 0.28
+        heroStroke.Thickness = 1
+        heroStroke.Parent = hero
+        local heroGradient = Instance.new("UIGradient")
+        heroGradient.Name = "FLUYENHeroGradient"
+        heroGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, getTheme().btnBg),
+            ColorSequenceKeypoint.new(1, getTheme().tabActive),
+        })
+        heroGradient.Rotation = 18
+        heroGradient.Parent = hero
+        local heroTitle = Instance.new("TextLabel")
+        heroTitle.Size = UDim2.new(1, -28, 0, 22)
+        heroTitle.Position = UDim2.new(0, 14, 0, 13)
+        heroTitle.BackgroundTransparency = 1
+        heroTitle.Text = "NEURAL CONTROL MATRIX"
+        heroTitle.TextColor3 = getTheme().accent
+        heroTitle.Font = Enum.Font.GothamBlack
+        heroTitle.TextSize = 13
+        heroTitle.TextXAlignment = Enum.TextXAlignment.Left
+        heroTitle.ZIndex = 9
+        heroTitle.Parent = hero
+        local heroSub = Instance.new("TextLabel")
+        heroSub.Size = UDim2.new(1, -28, 0, 16)
+        heroSub.Position = UDim2.new(0, 14, 0, 39)
+        heroSub.BackgroundTransparency = 1
+        heroSub.Text = "SIGNAL LOCKED  •  MODULES READY  •  " .. SCRIPT_VERSION
+        heroSub.TextColor3 = getTheme().textDim
+        heroSub.Font = Enum.Font.GothamMedium
+        heroSub.TextSize = 8
+        heroSub.TextXAlignment = Enum.TextXAlignment.Left
+        heroSub.ZIndex = 9
+        heroSub.Parent = hero
+    end
+    pages[name] = page
+    pageTitles[name] = headingTitle
+
+    local tabBtn = Instance.new("TextButton")
+    tabBtn.Name = "Tab_" .. name
+    tabBtn.Visible = name ~= "Admin"
+    tabBtn.Size = UDim2.new(1, 0, 0, 40)
+    tabBtn.BackgroundColor3 = name == "Home" and getTheme().tabActive or getTheme().tabInactive
+    tabBtn.BorderSizePixel = 0
+    tabBtn.AutoButtonColor = false
+    tabBtn.Text = tabDef.icon .. "  " .. T(name)
+    tabBtn.TextColor3 = name == "Home" and getTheme().text or getTheme().textDim
+    tabBtn.Font = name == "Home" and Enum.Font.GothamBold or Enum.Font.GothamMedium
+    tabBtn.TextSize = 10
+    tabBtn.TextXAlignment = Enum.TextXAlignment.Left
+    tabBtn.LayoutOrder = tabDef.order
+    tabBtn.ZIndex = 7
+    tabBtn.Parent = sidebar
+    local tabPad = Instance.new("UIPadding")
+    tabPad.Name = "TabPadding"
+    tabPad.PaddingLeft = UDim.new(0, 11)
+    tabPad.Parent = tabBtn
+    Instance.new("UICorner", tabBtn).CornerRadius = UDim.new(0, 12)
+    local stripe = Instance.new("Frame")
+    stripe.Name = "ActiveStripe"
+    stripe.Size = UDim2.new(0, 3, 0, 22)
+    stripe.Position = UDim2.new(0, 0, 0.5, -11)
+    stripe.BackgroundColor3 = getTheme().accent
+    stripe.BorderSizePixel = 0
+    stripe.Visible = name == "Home"
+    stripe.ZIndex = 8
+    stripe.Parent = tabBtn
+    Instance.new("UICorner", stripe).CornerRadius = UDim.new(0, 2)
+    tabBtn:SetAttribute("FLUYENRole", "tab")
+    local tabStroke = Instance.new("UIStroke")
+    tabStroke.Name = "TabStroke"
+    tabStroke.Color = getTheme().border
+    tabStroke.Transparency = name == "Home" and 0.08 or 0.78
+    tabStroke.Thickness = 1
+    tabStroke.Parent = tabBtn
+    tabButtons[name] = tabBtn
+    tabBtn.MouseEnter:Connect(function()
+        if currentTab ~= name then
+            tabBtn.BackgroundColor3 = getTheme().tabActive
+            tabStroke.Transparency = 0.18
+        end
+    end)
+    tabBtn.MouseLeave:Connect(function()
+        if currentTab ~= name then
+            tabBtn.BackgroundColor3 = getTheme().tabInactive
+            tabStroke.Transparency = 0.78
+        end
+    end)
+end
+
+pcall(function()
+    if camera then camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitMenuToViewport) end
+end)
+fitMenuToViewport()
+
+local hudClock = 0
+setConn("NeonHUD", RunService.RenderStepped:Connect(function(dt)
+    if not mainFrame.Visible then return end
+    hudClock = (hudClock + dt * 0.9) % (math.pi * 2)
+    local sweep = (math.sin(hudClock * 0.42) + 1) * 0.5
+    local pulse = (math.sin(hudClock * 1.7) + 1) * 0.5
+    neonSweep.Position = UDim2.new(sweep, -1, 0, 0)
+    neonSweep.BackgroundTransparency = 0.66 - pulse * 0.12
+    hudGridV.BackgroundTransparency = 0.94 - pulse * 0.04
+    hudGridH.BackgroundTransparency = 0.95 - pulse * 0.03
+    for _, mark in ipairs(cornerMarks) do
+        if mark and mark.Parent then mark.BackgroundTransparency = 0.30 - pulse * 0.12 end
+    end
+end))
+
+local ELEMENT_H = 34
+local function makeCard(parent, height)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, height or ELEMENT_H)
+    card.BackgroundColor3 = getTheme().btnBg
+    card.BorderSizePixel = 0
+    card.ZIndex = 7
+    card.Parent = parent
+    card:SetAttribute("FLUYENRole", "card")
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 11)
+    corner.Parent = card
+    local sheen = Instance.new("UIGradient")
+    sheen.Name = "FLUYENCardGradient"
+    sheen.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, getTheme().btnBg),
+        ColorSequenceKeypoint.new(1, getTheme().pageBg),
+    })
+    sheen.Rotation = 14
+    sheen.Parent = card
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = getTheme().border
+    stroke.Transparency = 0.55
+    stroke.Thickness = 1
+    stroke.Parent = card
+    return card
+end
+
+local function addSection(page, text)
+    local wrap = Instance.new("Frame")
+    wrap.Size = UDim2.new(1, 0, 0, 24)
+    wrap.BackgroundTransparency = 1
+    wrap.ZIndex = 7
+    wrap.Parent = page
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0, 3, 0, 15)
+    bar.Position = UDim2.new(0, 0, 0.5, -7)
+    bar.BackgroundColor3 = getTheme().accent
+    bar.BorderSizePixel = 0
+    bar.ZIndex = 8
+    bar.Parent = wrap
+    bar:SetAttribute("FLUYENRole", "accent")
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 2)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -12, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    registerText(label, text)
+    label.TextColor3 = getTheme().accent
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 8
+    label.Parent = wrap
+    label:SetAttribute("FLUYENRole", "section")
+    return wrap
+end
+
+local function addCheckbox(page, text, stateKey, callback)
+    local requiresKey = page.Name ~= "Page_Settings"
+    local row = makeCard(page, ELEMENT_H)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -62, 1, 0)
+    label.Position = UDim2.new(0, 14, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    registerText(label, text)
+    label.TextColor3 = getTheme().text
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 8
+    label.Parent = row
+    label:SetAttribute("FLUYENRole", "text")
+
+    local track = Instance.new("Frame")
+    track.Name = "ToggleTrack"
+    track.Size = UDim2.new(0, 36, 0, 20)
+    track.Position = UDim2.new(1, -50, 0.5, -10)
+    track.BackgroundColor3 = getTheme().checkboxBg
+    track.BorderSizePixel = 0
+    track.ZIndex = 8
+    track.Parent = row
+    track:SetAttribute("FLUYENRole", "toggleTrack")
+    Instance.new("UICorner", track).CornerRadius = UDim.new(0, 10)
+    local dot = Instance.new("Frame")
+    dot.Name = "ToggleDot"
+    dot.Size = UDim2.new(0, 16, 0, 16)
+    dot.BackgroundColor3 = getTheme().textDim
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 9
+    dot.Parent = track
+    dot:SetAttribute("FLUYENRole", "toggleDot")
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(0, 8)
+    local function sync(value)
+        dot.Position = value and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)
+        dot.BackgroundColor3 = value and getTheme().accent or getTheme().textDim
+        track.BackgroundColor3 = value and getTheme().accentDark or getTheme().checkboxBg
+    end
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.ZIndex = 10
+    btn.Parent = row
+    CheckboxRefs[#CheckboxRefs + 1] = {stateKey = stateKey, checkmark = dot, track = track, sync = sync}
+    if stateKey ~= nil then StateCallbacks[stateKey] = callback end
+    sync(stateKey ~= nil and States[stateKey] or false)
+    btn.Activated:Connect(function()
+        if requiresKey and not KeyAuthenticated then requestAccess() return end
+        if stateKey == nil then return end
+        States[stateKey] = not States[stateKey]
+        sync(States[stateKey])
+        if callback then pcall(function() callback(States[stateKey]) end) end
+        if updateAiForFeature then pcall(function() updateAiForFeature(text, States[stateKey]) end) end
+    end)
+    return row
+end
+
+local function addSlider(page, text, valueKey, min, max, callback)
+    local requiresKey = page.Name ~= "Page_Settings"
+    local row = makeCard(page, 48)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.72, 0, 0, 18)
+    label.Position = UDim2.new(0, 14, 0, 5)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    registerText(label, text)
+    label.TextColor3 = getTheme().text
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 8
+    label.Parent = row
+    label:SetAttribute("FLUYENRole", "text")
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Size = UDim2.new(0.25, 0, 0, 18)
+    valueLabel.Position = UDim2.new(0.73, 0, 0, 5)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(Values[valueKey] or min)
+    valueLabel.TextColor3 = getTheme().accent
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 11
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.ZIndex = 8
+    valueLabel.Parent = row
+    valueLabel:SetAttribute("FLUYENRole", "accentText")
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1, -28, 0, 5)
+    track.Position = UDim2.new(0, 14, 1, -12)
+    track.BackgroundColor3 = getTheme().sliderTrack
+    track.BorderSizePixel = 0
+    track.ZIndex = 8
+    track.Parent = row
+    track:SetAttribute("FLUYENRole", "track")
+    Instance.new("UICorner", track).CornerRadius = UDim.new(0, 3)
+    local fill = Instance.new("Frame")
+    local current = tonumber(Values[valueKey]) or min
+    local pct = math.clamp((current - min) / math.max(max - min, 1), 0, 1)
+    fill.Size = UDim2.new(pct, 0, 1, 0)
+    fill.BackgroundColor3 = getTheme().sliderFill
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 9
+    fill.Parent = track
+    fill:SetAttribute("FLUYENRole", "accent")
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(0, 3)
+    local sliderBtn = Instance.new("TextButton")
+    sliderBtn.Size = UDim2.new(1, 0, 0, 22)
+    sliderBtn.Position = UDim2.new(0, 0, 1, -21)
+    sliderBtn.BackgroundTransparency = 1
+    sliderBtn.Text = ""
+    sliderBtn.ZIndex = 10
+    sliderBtn.Parent = row
+    local dragging = false
+    local function updateFromInput(input)
+        local relX = math.clamp((input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
+        local val = math.floor(min + relX * (max - min) + 0.5)
+        Values[valueKey] = val
+        fill.Size = UDim2.new(relX, 0, 1, 0)
+        valueLabel.Text = tostring(val)
+        if callback then pcall(function() callback(val) end) end
+        if updateAiForFeature then pcall(function() updateAiForFeature(text, val) end) end
+    end
+    sliderBtn.InputBegan:Connect(function(input)
+        if requiresKey and not KeyAuthenticated then requestAccess() return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            updateFromInput(input)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateFromInput(input)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+    return row
+end
+
+local function addButton(page, text, callback)
+    local requiresKey = page.Name ~= "Page_Settings"
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, ELEMENT_H)
+    btn.BackgroundColor3 = getTheme().btnBg
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = getTheme().text
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 11
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.AutoButtonColor = false
+    btn.ZIndex = 7
+    btn.Parent = page
+    btn:SetAttribute("FLUYENRole", "button")
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = btn
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = getTheme().border
+    stroke.Transparency = 0.55
+    stroke.Thickness = 1
+    stroke.Parent = btn
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 14)
+    pad.Parent = btn
+    registerText(btn, text)
+    btn.Activated:Connect(function()
+        if requiresKey and not KeyAuthenticated then requestAccess() return end
+        if callback then pcall(function() callback() end) end
+        if updateAiForFeature then pcall(function() updateAiForFeature(text, true) end) end
+    end)
+    btn.MouseEnter:Connect(function() btn.BackgroundColor3 = getTheme().btnHover end)
+    btn.MouseLeave:Connect(function() btn.BackgroundColor3 = getTheme().btnBg end)
+    return btn
+end
+
+local function addInfoRow(page, labelText, valueText)
+    local row = makeCard(page, ELEMENT_H)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.48, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 14, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    registerText(lbl, labelText)
+    lbl.TextColor3 = getTheme().textDim
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 8
+    lbl.Parent = row
+    lbl:SetAttribute("FLUYENRole", "dim")
+    local val = Instance.new("TextLabel")
+    val.Size = UDim2.new(0.46, 0, 1, 0)
+    val.Position = UDim2.new(0.5, 0, 0, 0)
+    val.BackgroundTransparency = 1
+    val.Text = valueText or "N/A"
+    val.TextColor3 = getTheme().text
+    val.Font = Enum.Font.GothamBold
+    val.TextSize = 10
+    val.TextXAlignment = Enum.TextXAlignment.Right
+    val.ZIndex = 8
+    val.Parent = row
+    val:SetAttribute("FLUYENRole", "text")
+    return row, val
+end
+
+local function addDropdown(page, text, options, onSelect)
+    local requiresKey = page.Name ~= "Page_Settings"
+    local row = makeCard(page, ELEMENT_H + 4)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.42, 0, 1, 0)
+    label.Position = UDim2.new(0, 14, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    registerText(label, text)
+    label.TextColor3 = getTheme().text
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 10
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 8
+    label.Parent = row
+    label:SetAttribute("FLUYENRole", "text")
+    local dropBtn = Instance.new("TextButton")
+    dropBtn.Name = "DropdownButton"
+    dropBtn.Size = UDim2.new(0.5, 0, 0, 24)
+    dropBtn.Position = UDim2.new(0.47, 0, 0.5, -12)
+    dropBtn.BackgroundColor3 = getTheme().dropdownBg
+    dropBtn.BorderSizePixel = 0
+    dropBtn.Text = options[1] or "Select"
+    dropBtn.TextColor3 = getTheme().text
+    dropBtn.Font = Enum.Font.GothamMedium
+    dropBtn.TextSize = 10
+    dropBtn.AutoButtonColor = false
+    dropBtn.ZIndex = 20
+    dropBtn.Parent = row
+    dropBtn:SetAttribute("FLUYENRole", "dropdown")
+    Instance.new("UICorner", dropBtn).CornerRadius = UDim.new(0, 6)
+    local listFrame = Instance.new("Frame")
+    listFrame.Size = UDim2.new(0.5, 0, 0, #options * 24)
+    listFrame.Position = UDim2.new(0.47, 0, 1, 3)
+    listFrame.BackgroundColor3 = getTheme().dropdownBg
+    listFrame.BorderSizePixel = 0
+    listFrame.Visible = false
+    listFrame.ZIndex = 80
+    listFrame.Parent = row
+    listFrame:SetAttribute("FLUYENRole", "dropdown")
+    Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0, 6)
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Parent = listFrame
+    for i, option in ipairs(options) do
+        local optBtn = Instance.new("TextButton")
+        optBtn.Size = UDim2.new(1, 0, 0, 24)
+        optBtn.BackgroundColor3 = getTheme().dropdownBg
+        optBtn.BorderSizePixel = 0
+        optBtn.Text = option
+        optBtn.TextColor3 = getTheme().text
+        optBtn.Font = Enum.Font.GothamMedium
+        optBtn.TextSize = 10
+        optBtn.ZIndex = 81
+        optBtn.LayoutOrder = i
+        optBtn.Parent = listFrame
+        optBtn:SetAttribute("FLUYENRole", "dropdown")
+        optBtn.Activated:Connect(function()
+            if requiresKey and not KeyAuthenticated then requestAccess() return end
+            dropBtn.Text = option
+            listFrame.Visible = false
+            if onSelect then pcall(function() onSelect(option, i) end) end
+            if updateAiForFeature then pcall(function() updateAiForFeature(text, option) end) end
+        end)
+    end
+    dropBtn.Activated:Connect(function()
+        if requiresKey and not KeyAuthenticated then requestAccess() return end
+        listFrame.Visible = not listFrame.Visible
+    end)
+    return row
+end
+
+local function recalcPage(page)
+    if not page or not page:IsA("ScrollingFrame") then return end
+    pcall(function()
+        local layout = page:FindFirstChildOfClass("UIListLayout")
+        local padding = page:FindFirstChildOfClass("UIPadding")
+        local contentH = layout and layout.AbsoluteContentSize.Y or 0
+        local paddingH = padding and (padding.PaddingTop.Offset + padding.PaddingBottom.Offset) or 0
+        page.CanvasSize = UDim2.new(0, 0, 0, math.max(contentH + paddingH + 8, 1))
+    end)
+end
+local function recalcAllPages()
+    for _, page in pairs(pages) do recalcPage(page) end
+end
+
+local function syncAllCheckboxes()
+    for _, ref in ipairs(CheckboxRefs) do
+        if ref.sync and ref.stateKey then pcall(function() ref.sync(States[ref.stateKey] == true) end) end
+    end
+end
+
+local function applyTheme()
+    local theme = getTheme()
+    mainFrame.BackgroundColor3 = theme.bg
+    mainStroke.Color = theme.border
+    titleBar.BackgroundColor3 = theme.bg
+    if headerGradient then
+        headerGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, theme.bg),
+            ColorSequenceKeypoint.new(0.55, theme.bg),
+            ColorSequenceKeypoint.new(1, theme.sidebar),
+        })
+    end
+    brandMark.BackgroundColor3 = theme.accent
+    titleLabel.TextColor3 = theme.text
+    subtitleLabel.TextColor3 = theme.textDim
+    statusPill.BackgroundColor3 = theme.tabActive
+    statusPill.TextColor3 = theme.accent
+    closeBtn.BackgroundColor3 = theme.tabActive
+    closeBtn.TextColor3 = theme.textDim
+    headerLine.BackgroundColor3 = theme.border
+    sidebar.BackgroundColor3 = theme.sidebar
+    sidebarStroke.Color = theme.border
+    if railLogo then railLogo.BackgroundColor3 = theme.accent end
+    if railCaption then railCaption.TextColor3 = theme.textDim end
+    if kickerLabel then kickerLabel.TextColor3 = theme.textDim end
+    if workspaceStroke then workspaceStroke.Color = theme.border end
+    if hudGridV then hudGridV.BackgroundColor3 = theme.accent end
+    if hudGridH then hudGridH.BackgroundColor3 = theme.accent end
+    if neonSweep then neonSweep.BackgroundColor3 = theme.accent end
+    for _, mark in ipairs(cornerMarks or {}) do if mark and mark.Parent then mark.BackgroundColor3 = theme.accent end end
+    contentArea.BackgroundColor3 = theme.pageBg
+    if miniBtn then miniBtn.BackgroundColor3 = theme.accent end
+    if deviceLabel then deviceLabel.TextColor3 = theme.accent end
+    if batteryLabel then batteryLabel.TextColor3 = theme.textDim end
+    if aiPanel then aiPanel.BackgroundColor3 = theme.btnBg end
+    if aiStroke then aiStroke.Color = theme.accent end
+    if aiHeader then aiHeader.TextColor3 = theme.accent end
+    if aiText then aiText.TextColor3 = theme.textDim end
+    for _, heading in pairs(pageTitles) do
+        if heading and heading.Parent then heading.TextColor3 = theme.text end
+    end
+    for _, obj in ipairs(screenGui:GetDescendants()) do
+        if obj:IsA("UIStroke") and obj.Parent then
+            local parentRole = obj.Parent:GetAttribute("FLUYENRole")
+            if parentRole == "card" or parentRole == "button" or parentRole == "tab" then obj.Color = theme.border end
+        end
+        if obj:IsA("UIGradient") and obj.Name == "FLUYENCardGradient" then
+            obj.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, theme.btnBg),
+                ColorSequenceKeypoint.new(1, theme.pageBg),
+            })
+        elseif obj:IsA("UIGradient") and obj.Name == "FLUYENHeroGradient" then
+            obj.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, theme.btnBg),
+                ColorSequenceKeypoint.new(1, theme.tabActive),
+            })
+        end
+        local role = obj:GetAttribute("FLUYENRole")
+        if role == "card" and obj:IsA("Frame") then
+            obj.BackgroundColor3 = theme.btnBg
+        elseif role == "section" and obj:IsA("TextLabel") then
+            obj.TextColor3 = theme.accent
+        elseif role == "accent" and obj:IsA("Frame") then
+            obj.BackgroundColor3 = theme.accent
+        elseif role == "text" and (obj:IsA("TextLabel") or obj:IsA("TextButton")) then
+            obj.TextColor3 = theme.text
+        elseif role == "dim" and (obj:IsA("TextLabel") or obj:IsA("TextButton")) then
+            obj.TextColor3 = theme.textDim
+        elseif role == "accentText" and obj:IsA("TextLabel") then
+            obj.TextColor3 = theme.accent
+        elseif role == "button" and obj:IsA("TextButton") then
+            obj.BackgroundColor3 = theme.btnBg
+            obj.TextColor3 = theme.text
+        elseif role == "dropdown" and (obj:IsA("TextButton") or obj:IsA("Frame") or obj:IsA("TextBox")) then
+            obj.BackgroundColor3 = theme.dropdownBg
+            if obj:IsA("TextButton") or obj:IsA("TextBox") then obj.TextColor3 = theme.text end
+        elseif role == "accentButton" and obj:IsA("TextButton") then
+            obj.BackgroundColor3 = theme.accent
+            obj.TextColor3 = Color3.fromRGB(255, 255, 255)
+        elseif role == "track" and obj:IsA("Frame") then
+            obj.BackgroundColor3 = theme.sliderTrack
+        elseif role == "toggleTrack" and obj:IsA("Frame") then
+            obj.BackgroundColor3 = theme.checkboxBg
+        elseif role == "toggleDot" and obj:IsA("Frame") then
+            obj.BackgroundColor3 = theme.textDim
+        end
+    end
+    syncAllCheckboxes()
+    for name, btn in pairs(tabButtons) do
+        local active = name == currentTab
+        btn.BackgroundColor3 = active and theme.tabActive or theme.tabInactive
+        btn.TextColor3 = active and theme.text or theme.textDim
+        btn.Font = active and Enum.Font.GothamBold or Enum.Font.GothamMedium
+        local stripe = btn:FindFirstChild("ActiveStripe")
+        if stripe then stripe.BackgroundColor3 = theme.accent end
+    end
+    for _, page in pairs(pages) do page.ScrollBarImageColor3 = theme.accent end
+    updateAuthUi()
+end
+
+local function applyLanguage()
+    for _, entry in ipairs(TextRegistry) do
+        if entry.object and entry.object.Parent then
+            local value = T(entry.key)
+            if entry.object:GetAttribute("FLUYENRole") == "section" then value = value end
+            if entry.valueKey then value = value .. ": " .. tostring(Values[entry.valueKey]) end
+            entry.object.Text = value
+        end
+    end
+    for name, btn in pairs(tabButtons) do
+        local compact = mainFrame.AbsoluteSize.X < 470
+        local icon = "H"
+        for _, def in ipairs(TabDefs) do if def.name == name then icon = def.icon break end end
+        btn.Text = compact and icon or (icon .. "   " .. T(name))
+    end
+    recalcAllPages()
+end
+
+local function refreshCheckboxes()
+    syncAllCheckboxes()
+end
+local function replayActiveStateCallbacks()
+    for stateKey, callback in pairs(StateCallbacks) do
+        if callback and States[stateKey] ~= nil then pcall(function() callback(States[stateKey]) end) end
+    end
+end
+
+local function selectTab(name)
+    if not pages[name] then return end
+    if name == "Admin" and not AdminAuthenticated then
+        requestAccess("Admin")
+        name = "Settings"
+    elseif name ~= "Settings" and name ~= "Home" and not KeyAuthenticated then
+        requestAccess()
+        name = "Settings"
+    end
+    currentTab = name
+    for pageName, page in pairs(pages) do
+        page.Visible = pageName == name
+        if pageName == name then pcall(function() page.CanvasPosition = Vector2.new(0, 0) end) end
+    end
+    for btnName, btn in pairs(tabButtons) do
+        local active = btnName == name
+        local theme = getTheme()
+        btn.BackgroundColor3 = active and theme.tabActive or theme.tabInactive
+        btn.TextColor3 = active and theme.text or theme.textDim
+        btn.Font = active and Enum.Font.GothamBold or Enum.Font.GothamMedium
+        local stripe = btn:FindFirstChild("ActiveStripe")
+        if stripe then stripe.Visible = active end
+        local tabStroke = btn:FindFirstChild("TabStroke")
+        if tabStroke then tabStroke.Transparency = active and 0.08 or 0.78 end
+    end
+    recalcPage(pages[name])
+    if updateAiForTab then pcall(function() updateAiForTab(name) end) end
+end
+for btnName, btn in pairs(tabButtons) do
+    btn.Activated:Connect(function() selectTab(btnName) end)
+end
+
+updateAccessVisibility = function()
+    if tabButtons.Admin then tabButtons.Admin.Visible = AdminAuthenticated
+    if pages.Admin and not AdminAuthenticated and currentTab == "Admin" then
+        selectTab("Settings")
+    end
+end
+
+pcall(function()
+-- AI COPILOT HUD
+local AiGuide = {
+    Home = "Overview: monitor access, runtime state and module health from the command center.",
+    Visual = "Visual: manage player, monster, item and tracer overlays. Toggle only what you need.",
+    Combat = "Combat: configure aim, target filters and combat helpers. Use the target controls carefully.",
+    Movement = "Movement: adjust speed, fly, noclip and mobility tools. Disable them before leaving a server.",
+    Utility = "Utility: quality-of-life tools, protection and local helpers are grouped here.",
+    Server = "Server: server utilities and target tools are grouped here for quick access.",
+    Fun = "Fun: experimental local effects. Turn them off if the game physics become unstable.",
+    Settings = "Settings: enter free333 for standard access or khanhhuy for admin/report console access.",
+    Admin = "Admin: review reports saved in this runtime. Cross-session delivery needs a server adapter.",
+}
+updateAiForTab = function(name)
+    if aiText and aiText.Parent then aiText.Text = "AI COPILOT  /  " .. string.upper(name) .. "
+" .. (AiGuide[name] or "Select a module and I will explain it.") end
+end
+updateAiForFeature = function(feature, value)
+    if aiText and aiText.Parent then
+        local state = type(value) == "boolean" and (value and "ENABLED" or "DISABLED") or tostring(value)
+        aiText.Text = "AI COPILOT  /  " .. string.upper(tostring(feature)) .. "
+Status: " .. state .. ". Use the matching Settings or range control if you need to tune it."
+    end
+end
+
+aiPanel = Instance.new("Frame")
+aiPanel.Name = "AICopilot"
+aiPanel.Size = UDim2.new(0, 244, 0, 88)
+aiPanel.Position = UDim2.new(1, -18, 1, -18)
+aiPanel.AnchorPoint = Vector2.new(1, 1)
+aiPanel.BackgroundColor3 = getTheme().btnBg
+aiPanel.BackgroundTransparency = 0.05
+aiPanel.BorderSizePixel = 0
+aiPanel.ZIndex = 120
+aiPanel.Parent = screenGui
+Instance.new("UICorner", aiPanel).CornerRadius = UDim.new(0, 14)
+aiStroke = Instance.new("UIStroke")
+aiStroke.Color = getTheme().accent
+aiStroke.Transparency = 0.28
+aiStroke.Thickness = 1
+aiStroke.Parent = aiPanel
+aiHeader = Instance.new("TextLabel")
+aiHeader.Size = UDim2.new(1, -36, 0, 18)
+aiHeader.Position = UDim2.new(0, 12, 0, 8)
+aiHeader.BackgroundTransparency = 1
+aiHeader.Text = "AI COPILOT  /  ONLINE"
+aiHeader.TextColor3 = getTheme().accent
+aiHeader.Font = Enum.Font.GothamBlack
+aiHeader.TextSize = 9
+aiHeader.TextXAlignment = Enum.TextXAlignment.Left
+aiHeader.ZIndex = 122
+aiHeader.Parent = aiPanel
+aiText = Instance.new("TextLabel")
+aiText.Size = UDim2.new(1, -24, 1, -31)
+aiText.Position = UDim2.new(0, 12, 0, 27)
+aiText.BackgroundTransparency = 1
+aiText.TextColor3 = getTheme().textDim
+aiText.Font = Enum.Font.GothamMedium
+aiText.TextSize = 9
+aiText.TextWrapped = true
+aiText.TextXAlignment = Enum.TextXAlignment.Left
+aiText.TextYAlignment = Enum.TextYAlignment.Top
+aiText.ZIndex = 122
+aiText.Parent = aiPanel
+local aiClose = Instance.new("TextButton")
+aiClose.Size = UDim2.new(0, 20, 0, 20)
+aiClose.Position = UDim2.new(1, -26, 0, 6)
+aiClose.BackgroundTransparency = 1
+aiClose.Text = "×"
+aiClose.TextColor3 = getTheme().textDim
+aiClose.Font = Enum.Font.GothamBold
+aiClose.TextSize = 15
+aiClose.ZIndex = 123
+aiClose.Parent = aiPanel
+aiBubble = Instance.new("TextButton")
+aiBubble.Name = "AIBubble"
+aiBubble.Size = UDim2.new(0, 42, 0, 42)
+aiBubble.Position = UDim2.new(1, -18, 1, -18)
+aiBubble.AnchorPoint = Vector2.new(1, 1)
+aiBubble.BackgroundColor3 = getTheme().accent
+aiBubble.BorderSizePixel = 0
+aiBubble.Text = "AI"
+aiBubble.TextColor3 = Color3.fromRGB(255,255,255)
+aiBubble.Font = Enum.Font.GothamBlack
+aiBubble.TextSize = 12
+aiBubble.Visible = false
+aiBubble.ZIndex = 121
+aiBubble.Parent = screenGui
+Instance.new("UICorner", aiBubble).CornerRadius = UDim.new(0, 14)
+aiClose.Activated:Connect(function() aiPanel.Visible = false; aiBubble.Visible = true end)
+aiBubble.Activated:Connect(function() aiPanel.Visible = true; aiBubble.Visible = false end)
+updateAiForTab("Settings")
+end)
+
+-- Menu animation and controls
+local isOpen = false
+local isAnimating = false
+local menuToken = 0
+local openTween = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local closeTween = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local function openMenu()
+    if isOpen and not isAnimating then return end
+    menuToken = menuToken + 1
+    local token = menuToken
+    isOpen = true
+    isAnimating = true
+    mainFrame.Visible = true
+    shadowFrame.Visible = true
+    backdrop.Visible = true
+    backdrop.BackgroundTransparency = 1
+    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 9)
+    shadowFrame.Position = UDim2.new(0.5, 0, 0.5, 17)
+    uiScale.Scale = 0.94
+    if miniBtn then miniBtn.Visible = false end
+    if espLineGui then espLineGui.Enabled = false end
+    recalcAllPages()
+    TweenService:Create(backdrop, openTween, {BackgroundTransparency = 0.52}):Play()
+    local move = TweenService:Create(mainFrame, openTween, {Position = UDim2.new(0.5, 0, 0.5, 0)})
+    local shadowMove = TweenService:Create(shadowFrame, openTween, {Position = UDim2.new(0.5, 0, 0.5, 8)})
+    move:Play()
+    shadowMove:Play()
+    TweenService:Create(uiScale, openTween, {Scale = 1}):Play()
+    move.Completed:Connect(function()
+        if token == menuToken then
+            isAnimating = false
+            mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+            shadowFrame.Position = UDim2.new(0.5, 0, 0.5, 8)
+            uiScale.Scale = 1
+        end
+    end)
+end
+local function closeMenu()
+    if not isOpen or isAnimating then return end
+    menuToken = menuToken + 1
+    local token = menuToken
+    isOpen = false
+    isAnimating = true
+    if espLineGui then espLineGui.Enabled = false end
+    local move = TweenService:Create(mainFrame, closeTween, {Position = UDim2.new(0.5, 0, 0.5, 9)})
+    local shadowMove = TweenService:Create(shadowFrame, closeTween, {Position = UDim2.new(0.5, 0, 0.5, 17)})
+    TweenService:Create(backdrop, closeTween, {BackgroundTransparency = 1}):Play()
+    move:Play()
+    shadowMove:Play()
+    TweenService:Create(uiScale, closeTween, {Scale = 0.94}):Play()
+    move.Completed:Connect(function()
+        if token ~= menuToken or isOpen then return end
+        isAnimating = false
+        mainFrame.Visible = false
+        shadowFrame.Visible = false
+        backdrop.Visible = false
+        mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+        shadowFrame.Position = UDim2.new(0.5, 0, 0.5, 8)
+        uiScale.Scale = 1
+        if States.MinimizeButton and miniBtn then miniBtn.Visible = true end
+    end)
+end
+local function toggleMenu()
+    if isOpen then closeMenu() else openMenu() end
+end
+
+miniBtn = Instance.new("TextButton")
+miniBtn.Name = "FloatingButton"
+miniBtn.Size = UDim2.new(0, 44, 0, 44)
+miniBtn.Position = UDim2.new(0, 14, 0.5, -22)
+miniBtn.BackgroundColor3 = getTheme().accent
+miniBtn.BorderSizePixel = 0
+miniBtn.Text = "F"
+miniBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+miniBtn.Font = Enum.Font.GothamBold
+miniBtn.TextSize = 17
+miniBtn.AutoButtonColor = false
+miniBtn.ZIndex = 100
+miniBtn.Visible = false
+miniBtn.Parent = screenGui
+Instance.new("UICorner", miniBtn).CornerRadius = UDim.new(0, 14)
+local miniStroke = Instance.new("UIStroke")
+miniStroke.Color = Color3.fromRGB(255, 255, 255)
+miniStroke.Transparency = 0.7
+miniStroke.Parent = miniBtn
+miniBtn.MouseEnter:Connect(function() miniBtn.BackgroundColor3 = getTheme().accentDark end)
+miniBtn.MouseLeave:Connect(function() miniBtn.BackgroundColor3 = getTheme().accent end)
+miniBtn.Activated:Connect(toggleMenu)
+backdropClose.Activated:Connect(closeMenu)
+closeBtn.Activated:Connect(closeMenu)
+
+-- Draggable header; disabled immediately when the setting is disabled.
+do
+    local dragging = false
+    local dragStart, startPos
+    titleBar.InputBegan:Connect(function(input)
+        if not States.DraggableGUI then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+    titleBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and States.DraggableGUI and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            shadowFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y + 8)
+        end
+    end)
+end
+
+fitMenuToViewport()
+
+-- POPULATE TABS
+-- ============================================================
+local WorldTargets = {monsters = {}, items = {}}
+
+-- HOME TAB
+do
+    local p = pages["Home"]
+    addSection(p, T("ScriptName"))
+    addInfoRow(p, T("ScriptName"), SCRIPT_NAME)
+    addInfoRow(p, T("Version"), SCRIPT_VERSION)
+    addInfoRow(p, T("Username"), player.Name)
+    addInfoRow(p, T("Executor"), "Delta")
+    addInfoRow(p, T("Credits"), "FLUYEN Team")
+    addSection(p, T("Changelog"))
+    addInfoRow(p, "v9.0", "World ESP, target tools and NPC combat helpers")
+    addInfoRow(p, "v8.0", "Premium access gate, edge ESP and runtime control")
+    addInfoRow(p, "v7.0", "Rebuilt responsive card interface")
+    addInfoRow(p, "v3.0", "Added multi-language & themes")
+end
+
+-- VISUAL TAB
+espLineGui = Instance.new("ScreenGui")
+espLineGui.Name = "FLUYEN_ESP_Lines"
+espLineGui.ResetOnSpawn = false
+espLineGui.IgnoreGuiInset = true
+espLineGui.DisplayOrder = 120
+espLineGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+espLineGui.Enabled = false
+espLineGui.Parent = playerGui
+
+local espLines = {}
+local worldVisuals = {}
+local clearWorldVisuals
+local MAX_VISIBLE_TRACERS = 18
+local function destroyEspLines()
+    for key, line in pairs(espLines) do
+        pcall(function() line:Destroy() end)
+        espLines[key] = nil
+    end
+end
+
+local function hideEspLines()
+    for _, line in pairs(espLines) do
+        line.Visible = false
+    end
+end
+
+local function getLineOrigin(viewport)
+    local x = math.clamp(viewport.X * 0.5, 12, math.max(12, viewport.X - 12))
+    local y = math.max(12, viewport.Y - 18)
+    return Vector2.new(x, y)
+end
+
+local function updateEspLine(line, fromPoint, toPoint, color)
+    local delta = toPoint - fromPoint
+    local length = delta.Magnitude
+    if length < 2 or length ~= length then
+        line.Visible = false
+        return
+    end
+    line.Position = UDim2.fromOffset(math.floor(fromPoint.X + 0.5), math.floor(fromPoint.Y + 0.5))
+    line.Size = UDim2.fromOffset(math.max(2, math.floor(length + 0.5)), 2)
+    line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+    line.BackgroundColor3 = color
+    line.BackgroundTransparency = 0.08
+    line.Visible = true
+end
+
+local function removeVisualObject(character, name)
+    if character then
+        local object = character:FindFirstChild(name)
+        if object then pcall(function() object:Destroy() end) end
+    end
+end
+
+local function clearVisualObjects()
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        local character = targetPlayer.Character
+        if character then
+            for _, name in ipairs({"FLUYEN_ESP", "FLUYEN_Box", "FLUYEN_Cham"}) do
+                removeVisualObject(character, name)
+            end
+            local head = character:FindFirstChild("Head")
+            if head then
+                for _, name in ipairs({"FLUYEN_Name", "FLUYEN_Health", "FLUYEN_Dist"}) do
+                    removeVisualObject(head, name)
+                end
+            end
+        end
+    end
+    destroyEspLines()
+    if clearWorldVisuals then clearWorldVisuals() end
+end
+
+local function ensureNameGui(head, targetPlayer)
+    local gui = head:FindFirstChild("FLUYEN_Name")
+    if not gui then
+        gui = Instance.new("BillboardGui")
+        gui.Name = "FLUYEN_Name"
+        gui.Size = UDim2.new(0, 150, 0, 22)
+        gui.StudsOffset = Vector3.new(0, 3, 0)
+        gui.AlwaysOnTop = true
+        gui.Parent = head
+        local txt = Instance.new("TextLabel")
+        txt.Name = "NameText"
+        txt.Size = UDim2.new(1, 0, 1, 0)
+        txt.BackgroundTransparency = 1
+        txt.TextStrokeTransparency = 0.35
+        txt.Font = Enum.Font.GothamBold
+        txt.TextSize = 12
+        txt.Parent = gui
+    end
+    local txt = gui:FindFirstChild("NameText")
+    if txt then
+        txt.Text = targetPlayer.DisplayName .. "  @" .. targetPlayer.Name
+        txt.TextColor3 = getTheme().text
+    end
+end
+
+local function ensureHealthGui(head, humanoid)
+    local gui = head:FindFirstChild("FLUYEN_Health")
+    if not gui then
+        gui = Instance.new("BillboardGui")
+        gui.Name = "FLUYEN_Health"
+        gui.Size = UDim2.new(0, 110, 0, 12)
+        gui.StudsOffset = Vector3.new(0, 4.5, 0)
+        gui.AlwaysOnTop = true
+        gui.Parent = head
+        local bg = Instance.new("Frame")
+        bg.Name = "HPBackground"
+        bg.Size = UDim2.new(1, 0, 1, 0)
+        bg.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+        bg.BorderSizePixel = 0
+        bg.Parent = gui
+        Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 3)
+        local fill = Instance.new("Frame")
+        fill.Name = "HPFill"
+        fill.Size = UDim2.new(1, 0, 1, 0)
+        fill.BorderSizePixel = 0
+        fill.Parent = bg
+        Instance.new("UICorner", fill).CornerRadius = UDim.new(0, 3)
+    end
+    local bg = gui:FindFirstChild("HPBackground")
+    local fill = bg and bg:FindFirstChild("HPFill")
+    if fill then
+        local hp = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
+        fill.Size = UDim2.new(hp, 0, 1, 0)
+        fill.BackgroundColor3 = Color3.new(1 - hp, hp, 0)
+    end
+end
+
+local function ensureDistanceGui(head, distance)
+    local gui = head:FindFirstChild("FLUYEN_Dist")
+    if not gui then
+        gui = Instance.new("BillboardGui")
+        gui.Name = "FLUYEN_Dist"
+        gui.Size = UDim2.new(0, 100, 0, 18)
+        gui.StudsOffset = Vector3.new(0, 2, 0)
+        gui.AlwaysOnTop = true
+        gui.Parent = head
+        local txt = Instance.new("TextLabel")
+        txt.Name = "DistText"
+        txt.Size = UDim2.new(1, 0, 1, 0)
+        txt.BackgroundTransparency = 1
+        txt.TextColor3 = Color3.fromRGB(255, 200, 50)
+        txt.Font = Enum.Font.Gotham
+        txt.TextSize = 11
+        txt.Parent = gui
+    end
+    local txt = gui:FindFirstChild("DistText")
+    if txt then txt.Text = math.floor(distance) .. "m" end
+end
+
+local function worldRoot(instance)
+    if not instance then return nil end
+    if instance:IsA("BasePart") then return instance end
+    if instance:IsA("Model") or instance:IsA("Tool") or instance:IsA("Folder") then
+        return (instance:IsA("Model") and instance.PrimaryPart)
+            or instance:FindFirstChild("HumanoidRootPart")
+            or instance:FindFirstChild("Head")
+            or instance:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return nil
+end
+
+local function isItemCandidate(instance)
+    local name = string.lower(instance.Name or "")
+    if instance:IsA("Tool") or instance:FindFirstChildWhichIsA("ProximityPrompt", true) then return true end
+    return string.find(name, "item", 1, true) or string.find(name, "loot", 1, true)
+        or string.find(name, "coin", 1, true) or string.find(name, "chest", 1, true)
+        or string.find(name, "drop", 1, true) or string.find(name, "collect", 1, true)
+        or string.find(name, "weapon", 1, true)
+end
+
+local function isMonsterCandidate(instance)
+    if not instance:IsA("Model") then return false end
+    if Players:GetPlayerFromCharacter(instance) then return false end
+    local humanoid = instance:FindFirstChildOfClass("Humanoid")
+    return humanoid and humanoid.Health > 0
+end
+
+local function makeWorldVisual(instance, kind, root, distance)
+    local entry = worldVisuals[instance]
+    if not entry then
+        local highlight
+        if kind == "Monster" and instance:IsA("Model") then
+            highlight = Instance.new("Highlight")
+            highlight.Name = "FLUYEN_MonsterESP"
+            highlight.FillTransparency = 0.7
+            highlight.OutlineTransparency = 0.05
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.Parent = instance
+        end
+        local gui = Instance.new("BillboardGui")
+        gui.Name = kind == "Monster" and "FLUYEN_MonsterLabel" or "FLUYEN_ItemLabel"
+        gui.Size = UDim2.new(0, 140, 0, 22)
+        gui.StudsOffset = kind == "Monster" and Vector3.new(0, 3, 0) or Vector3.new(0, 1.5, 0)
+        gui.AlwaysOnTop = true
+        gui.Parent = root
+        local label = Instance.new("TextLabel")
+        label.Name = "Label"
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.TextStrokeTransparency = 0.3
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 11
+        label.Parent = gui
+        entry = {root = root, gui = gui, label = label, highlight = highlight, kind = kind}
+        worldVisuals[instance] = entry
+    end
+    entry.root = root
+    entry.label.Text = (kind == "Monster" and "[NPC] " or "[ITEM] ") .. instance.Name .. "  " .. math.floor(distance) .. "m"
+    entry.label.TextColor3 = kind == "Monster" and Color3.fromRGB(255, 105, 105) or Color3.fromRGB(255, 220, 90)
+    if entry.highlight then
+        entry.highlight.FillColor = Color3.fromRGB(255, 90, 90)
+        entry.highlight.OutlineColor = Color3.fromRGB(255, 220, 220)
+    end
+    entry.gui.Parent = root
+    entry.gui.Enabled = true
+end
+
+clearWorldVisuals = function()
+    for instance, entry in pairs(worldVisuals) do
+        pcall(function() if entry.gui then entry.gui:Destroy() end end)
+        pcall(function() if entry.highlight then entry.highlight:Destroy() end end)
+        worldVisuals[instance] = nil
+    end
+end
+
+
+local nextWorldScan = 0
+local function scanWorldTargets()
+    local monsters, items = {}, {}
+    local count = 0
+    for _, instance in ipairs(Workspace:GetDescendants()) do
+        if count >= 350 then break end
+        if isMonsterCandidate(instance) then
+            local root = worldRoot(instance)
+            if root then monsters[#monsters + 1] = {instance = instance, root = root} count = count + 1 end
+        elseif (instance:IsA("Model") or instance:IsA("Tool") or instance:IsA("BasePart")) and isItemCandidate(instance) and not Players:GetPlayerFromCharacter(instance) then
+            local root = worldRoot(instance)
+            if root then items[#items + 1] = {instance = instance, root = root} count = count + 1 end
+        end
+    end
+    WorldTargets = {monsters = monsters, items = items}
+end
+
+local function updateWorldEsp(activeCamera, localRoot)
+    if not States.MonsterESP and not States.ItemESP then
+        clearWorldVisuals()
+        return
+    end
+    if tick() >= nextWorldScan then
+            nextWorldScan = tick() + 0.65
+        pcall(scanWorldTargets)
+    end
+    local seen = {}
+    local maxDistance = math.max(50, tonumber(Values.WorldESPRange) or 300)
+    local function draw(list, enabled, kind)
+        if not enabled then return end
+        for _, data in ipairs(list) do
+            local root = data.root
+            if root and root.Parent then
+                local distance = localRoot and (root.Position - localRoot.Position).Magnitude or 0
+                local screenPos, onScreen = activeCamera:WorldToViewportPoint(root.Position)
+                if distance <= maxDistance and onScreen and screenPos.Z > 0 then
+                    makeWorldVisual(data.instance, kind, root, distance)
+                    seen[data.instance] = true
+                end
+            end
+        end
+    end
+    draw(WorldTargets.monsters, States.MonsterESP, "Monster")
+    draw(WorldTargets.items, States.ItemESP, "Item")
+    for instance, entry in pairs(worldVisuals) do
+        if not seen[instance] then
+            pcall(function() if entry.gui then entry.gui.Enabled = false end end)
+            pcall(function() if entry.highlight then entry.highlight.Enabled = false end end)
+        end
+    end
+end
+
+local function updateVisualRuntime()
+    killConn("VisualRuntime")
+    clearVisualObjects()
+    local active = States.ESP or States.BoxESP or States.NameESP or States.HealthESP or States.DistanceESP or States.Tracers or States.MonsterESP or States.ItemESP or States.Chams
+    if not active then
+        espLineGui.Enabled = false
+        return
+    end
+    setConn("VisualRuntime", RunService.RenderStepped:Connect(function()
+        if not (States.ESP or States.BoxESP or States.NameESP or States.HealthESP or States.DistanceESP or States.Tracers or States.MonsterESP or States.ItemESP or States.Chams) then
+            clearVisualObjects()
+            espLineGui.Enabled = false
+            killConn("VisualRuntime")
+            return
+        end
+        pcall(function()
+            local activeCamera = Workspace.CurrentCamera or camera
+            local localRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if not activeCamera then return end
+            local viewport = activeCamera.ViewportSize
+            local theme = getTheme()
+            local seenLines = {}
+            local visibleTargets = {}
+            hideEspLines()
+
+            for _, targetPlayer in ipairs(Players:GetPlayers()) do
+                local character = targetPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                local head = character and character:FindFirstChild("Head")
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if targetPlayer ~= player and character and root and humanoid and humanoid.Health > 0 then
+                    local screenPos, inViewport = activeCamera:WorldToViewportPoint(root.Position)
+                    local validScreen = inViewport and screenPos.Z > 0
+                        and screenPos.X >= 4 and screenPos.X <= viewport.X - 4
+                        and screenPos.Y >= 4 and screenPos.Y <= viewport.Y - 4
+
+                    if States.ESP and validScreen then
+                        local highlight = character:FindFirstChild("FLUYEN_ESP")
+                        if not highlight then
+                            highlight = Instance.new("Highlight")
+                            highlight.Name = "FLUYEN_ESP"
+                            highlight.FillTransparency = 0.62
+                            highlight.OutlineTransparency = 0.05
+                            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            highlight.Parent = character
+                        end
+                        highlight.FillColor = theme.accent
+                        highlight.OutlineColor = theme.text
+                    else
+                        removeVisualObject(character, "FLUYEN_ESP")
+                    end
+
+                    if States.BoxESP and validScreen then
+                        local box = character:FindFirstChild("FLUYEN_Box")
+                        if not box then
+                            box = Instance.new("BoxHandleAdornment")
+                            box.Name = "FLUYEN_Box"
+                            box.Adornee = root
+                            box.Size = Vector3.new(4, 5, 1)
+                            box.Transparency = 0.72
+                            box.AlwaysOnTop = true
+                            box.ZIndex = 5
+                            box.Parent = character
+                        end
+                        box.Color3 = theme.accent
+                    else
+                        removeVisualObject(character, "FLUYEN_Box")
+                    end
+
+                    if head then
+                        if States.NameESP then ensureNameGui(head, targetPlayer) else removeVisualObject(head, "FLUYEN_Name") end
+                        if States.HealthESP then ensureHealthGui(head, humanoid) else removeVisualObject(head, "FLUYEN_Health") end
+                        if States.DistanceESP and localRoot then
+                            ensureDistanceGui(head, (root.Position - localRoot.Position).Magnitude)
+                        else
+                            removeVisualObject(head, "FLUYEN_Dist")
+                        end
+                    end
+
+                    if States.Chams then
+                        local cham = character:FindFirstChild("FLUYEN_Cham")
+                        if not cham then
+                            cham = Instance.new("Highlight")
+                            cham.Name = "FLUYEN_Cham"
+                            cham.FillTransparency = 0.42
+                            cham.OutlineTransparency = 0.1
+                            cham.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            cham.Parent = character
+                        end
+                        cham.FillColor = theme.accentDark
+                        cham.OutlineColor = theme.accent
+                    else
+                        removeVisualObject(character, "FLUYEN_Cham")
+                    end
+
+                    if States.Tracers and validScreen then
+                        local distance = localRoot and (root.Position - localRoot.Position).Magnitude or 0
+                        table.insert(visibleTargets, {
+                            key = tostring(targetPlayer.UserId),
+                            point = Vector2.new(screenPos.X, screenPos.Y),
+                            distance = distance,
+                        })
+                    end
+                end
+            end
+
+            updateWorldEsp(activeCamera, localRoot)
+            table.sort(visibleTargets, function(a, b) return a.distance < b.distance end)
+            for index, data in ipairs(visibleTargets) do
+                if index > MAX_VISIBLE_TRACERS then break end
+                seenLines[data.key] = true
+                local line = espLines[data.key]
+                if not line then
+                    line = Instance.new("Frame")
+                    line.Name = "ESPLine_" .. data.key
+                    line.AnchorPoint = Vector2.new(0, 0.5)
+                    line.BorderSizePixel = 0
+                    line.Active = false
+                    line.ZIndex = 2
+                    line.Parent = espLineGui
+                    Instance.new("UICorner", line).CornerRadius = UDim.new(0, 1)
+                    espLines[data.key] = line
+                end
+                local edgeX = math.clamp(data.point.X, 10, math.max(10, viewport.X - 10))
+                local edgePoint = Vector2.new(edgeX, math.max(10, viewport.Y - 12))
+                updateEspLine(line, edgePoint, data.point, theme.accent)
+            end
+
+            for key, line in pairs(espLines) do
+                if not seenLines[key] then line.Visible = false end
+            end
+            espLineGui.Enabled = States.Tracers and not mainFrame.Visible and next(seenLines) ~= nil
+        end)
+    end))
+end
+
+do
+    local p = pages["Visual"]
+    addSection(p, T("ESP"))
+    addCheckbox(p, T("ESP"), "ESP", updateVisualRuntime)
+    addCheckbox(p, T("BoxESP"), "BoxESP", updateVisualRuntime)
+    addCheckbox(p, T("NameESP"), "NameESP", updateVisualRuntime)
+    addCheckbox(p, T("HealthESP"), "HealthESP", updateVisualRuntime)
+    addCheckbox(p, T("DistanceESP"), "DistanceESP", updateVisualRuntime)
+    addCheckbox(p, "ESP Line", "Tracers", updateVisualRuntime)
+    addCheckbox(p, "Monster ESP", "MonsterESP", updateVisualRuntime)
+    addCheckbox(p, "Item ESP", "ItemESP", updateVisualRuntime)
+    addSlider(p, "World ESP Range", "WorldESPRange", 50, 800)
+    addCheckbox(p, T("Chams"), "Chams", updateVisualRuntime)
+    addButton(p, "Rebuild ESP Cache", function()
+        clearVisualObjects()
+        updateVisualRuntime()
+        notify("ESP", "Visual cache rebuilt.", 2)
+    end)
+    addButton(p, "Clear ESP Objects", function()
+        clearVisualObjects()
+        notify("ESP", "ESP objects cleared.", 2)
+    end)
+    local savedLighting = nil
+    addCheckbox(p, T("FullBright"), "FullBright", function(v)
+        killConn("FullBright")
+        if v then
+            if not savedLighting then
+                savedLighting = {
+                    Brightness = Lighting.Brightness,
+                    ClockTime = Lighting.ClockTime,
+                    FogEnd = Lighting.FogEnd,
+                    GlobalShadows = Lighting.GlobalShadows,
+                }
+            end
+            setConn("FullBright", RunService.Heartbeat:Connect(function()
+                pcall(function()
+                    Lighting.Brightness = 2
+                    Lighting.ClockTime = 14
+                    Lighting.FogEnd = 100000
+                    Lighting.GlobalShadows = false
+                end)
+            end))
+        else
+            if savedLighting then
+                pcall(function()
+                    Lighting.Brightness = savedLighting.Brightness
+                    Lighting.ClockTime = savedLighting.ClockTime
+                    Lighting.FogEnd = savedLighting.FogEnd
+                    Lighting.GlobalShadows = savedLighting.GlobalShadows
+                end)
+                savedLighting = nil
+            end
+        end
+    end)
+end
+
+-- COMBAT TAB
+do
+    local p = pages["Combat"]
+    local aimTarget = nil
+    local aimNextUpdate = 0
+    local silentHookAttempted = false
+    local silentHookReady = false
+
+    local aimCircle = Instance.new("Frame")
+    aimCircle.Name = "FLUYEN_AimFOV"
+    aimCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+    aimCircle.BackgroundTransparency = 1
+    aimCircle.BorderSizePixel = 0
+    aimCircle.Visible = false
+    aimCircle.ZIndex = 2
+    aimCircle.Parent = screenGui
+    Instance.new("UICorner", aimCircle).CornerRadius = UDim.new(1, 0)
+    local aimCircleStroke = Instance.new("UIStroke")
+    aimCircleStroke.Thickness = 1
+    aimCircleStroke.Transparency = 0.25
+    aimCircleStroke.Color = getTheme().accent
+    aimCircleStroke.Parent = aimCircle
+
+    local function getAimPart(targetPlayer)
+        if not targetPlayer or not targetPlayer.Character then return nil end
+        return targetPlayer.Character:FindFirstChild("Head")
+            or targetPlayer.Character:FindFirstChild("UpperTorso")
+            or targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function isAimTargetVisible(part)
+        if not part or not camera then return false end
+        local origin = camera.CFrame.Position
+        local direction = part.Position - origin
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {player.Character}
+        local result = Workspace:Raycast(origin, direction, params)
+        return not result or result.Instance:IsDescendantOf(part.Parent)
+    end
+
+    local function getAimTarget()
+        if not camera then return nil end
+        local viewport = camera.ViewportSize
+        local center = Vector2.new(viewport.X * 0.5, viewport.Y * 0.5)
+        local limit = States.AimFOV and math.max(20, Values.AimFOVValue) or math.huge
+        local best, bestDistance = nil, limit
+        for _, targetPlayer in ipairs(Players:GetPlayers()) do
+            if targetPlayer ~= player and targetPlayer.Character then
+                local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+                local part = getAimPart(targetPlayer)
+                if humanoid and humanoid.Health > 0 and part then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+                    if onScreen and screenPos.Z > 0 then
+                        local distance = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+                        if distance <= bestDistance and isAimTargetVisible(part) then
+                            bestDistance = distance
+                            best = {player = targetPlayer, part = part}
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function getAimPosition(target)
+        if not target or not target.part then return nil end
+        local position = target.part.Position
+        if States.AimPrediction and target.player.Character then
+            local root = target.player.Character:FindFirstChild("HumanoidRootPart")
+            if root then position = position + root.AssemblyLinearVelocity * 0.12 end
+        end
+        return position
+    end
+
+    local function updateAimCircle()
+        if not camera then return end
+        local viewport = camera.ViewportSize
+        local diameter = math.max(40, (Values.AimFOVValue or 90) * 2)
+        aimCircle.Size = UDim2.fromOffset(diameter, diameter)
+        aimCircle.Position = UDim2.fromOffset(viewport.X * 0.5, viewport.Y * 0.5)
+        aimCircleStroke.Color = getTheme().accent
+        aimCircle.Visible = States.AimFOV and not mainFrame.Visible
+    end
+
+    local function installSilentAimFallback()
+        if silentHookAttempted then return end
+        silentHookAttempted = true
+        if type(hookmetamethod) ~= "function" then return end
+        local mouse = player:GetMouse()
+        local oldIndex
+        local wrapper = function(self, key)
+            if States.SilentAim and self == mouse and (key == "Hit" or key == "Target") then
+                local target = aimTarget or getAimTarget()
+                local position = getAimPosition(target)
+                if target and position then
+                    if key == "Hit" then return CFrame.new(position) end
+                    return target.part
+                end
+            end
+            return oldIndex(self, key)
+        end
+        local closure = wrapper
+        if type(newcclosure) == "function" then closure = newcclosure(wrapper) end
+        local ok, previous = pcall(function()
+            return hookmetamethod(game, "__index", closure)
+        end)
+        if ok and previous then
+            oldIndex = previous
+            silentHookReady = true
+        end
+    end
+
+    local function publishSilentTarget()
+        local env = nil
+        pcall(function() env = getgenv and getgenv() or _G end)
+        if not env then return end
+        env.FLUYEN_SilentTarget = aimTarget and aimTarget.part or nil
+        env.FLUYEN_SilentPosition = getAimPosition(aimTarget)
+        env.FLUYEN_SilentAimReady = silentHookReady
+    end
+
+    local function updateAimRuntime()
+        killConn("AimRuntime")
+        if not States.Aim and not States.SilentAim and not States.AimFOV then
+            aimTarget = nil
+            aimCircle.Visible = false
+            publishSilentTarget()
+            return
+        end
+        if States.SilentAim then installSilentAimFallback() end
+        setConn("AimRuntime", RunService.RenderStepped:Connect(function()
+            if tick() < aimNextUpdate then return end
+            aimNextUpdate = tick() + 0.025
+            aimTarget = getAimTarget()
+            updateAimCircle()
+            publishSilentTarget()
+            if States.Aim and aimTarget then
+                local position = getAimPosition(aimTarget)
+                if position and camera then
+                    local desired = CFrame.new(camera.CFrame.Position, position)
+                    local smooth = math.clamp((Values.AimSmoothness or 50) / 100, 0.05, 1)
+                    camera.CFrame = camera.CFrame:Lerp(desired, smooth)
+                end
+            end
+        end))
+    end
+
+    local function findPlayerByName(query)
+        query = string.lower(tostring(query or ""))
+        if query == "" then return nil end
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if candidate ~= player then
+                local full = string.lower(candidate.Name .. " " .. candidate.DisplayName)
+                if string.find(full, query, 1, true) then return candidate end
+            end
+        end
+        return nil
+    end
+
+    local targetCard = makeCard(p, 44)
+    local targetBox = Instance.new("TextBox")
+    targetBox.Size = UDim2.new(1, -28, 0, 30)
+    targetBox.Position = UDim2.new(0, 14, 0, 7)
+    targetBox.BackgroundColor3 = getTheme().dropdownBg
+    targetBox.BorderSizePixel = 0
+    targetBox.PlaceholderText = "Target player name"
+    targetBox.PlaceholderColor3 = getTheme().textDim
+    targetBox.Text = tostring(Values.TargetName or "")
+    targetBox.ClearTextOnFocus = false
+    targetBox.TextColor3 = getTheme().text
+    targetBox.Font = Enum.Font.GothamMedium
+    targetBox.TextSize = 11
+    targetBox.TextXAlignment = Enum.TextXAlignment.Left
+    targetBox.ZIndex = 8
+    targetBox.Parent = targetCard
+    targetBox:SetAttribute("FLUYENRole", "dropdown")
+    local targetPad = Instance.new("UIPadding")
+    targetPad.PaddingLeft = UDim.new(0, 10)
+    targetPad.Parent = targetBox
+    Instance.new("UICorner", targetBox).CornerRadius = UDim.new(0, 7)
+    targetBox.FocusLost:Connect(function()
+        Values.TargetName = targetBox.Text
+    end)
+
+    local function genericLocalStrike(model)
+        local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return false end
+        local targetPlayer = Players:GetPlayerFromCharacter(model)
+        if targetPlayer then
+            local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
+            if tool and type(tool.Activate) == "function" then
+                pcall(function() tool:Activate() end)
+                return true
+            end
+            return false
+        end
+        -- Only touch NPCs that the current client can legitimately control; no remote guessing.
+        if model:IsDescendantOf(Workspace) then
+            pcall(function() humanoid.Health = 0 end)
+            return humanoid.Health <= 0
+        end
+        return false
+    end
+
+    addSection(p, "TARGET ACTIONS")
+    addButton(p, "Kill Target / NPC", function()
+        local target = findPlayerByName(Values.TargetName)
+        if target and target.Character then
+            local activated = genericLocalStrike(target.Character)
+            if activated then
+                notify("Combat", "Equipped tool activated. Player damage remains game-specific.", 3)
+            else
+                notify("Combat", "Player damage is game-specific; NPC health can only be changed when locally controlled.", 3)
+            end
+        else
+            notify("Combat", "Target not found. Enter a partial player name.", 2)
+        end
+    end)
+    addButton(p, "Attack Target (Tool Assist)", function()
+        local target = findPlayerByName(Values.TargetName)
+        local root = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        if root and genericLocalStrike(target.Character) then
+            notify("Combat", "Equipped tool activated for " .. target.Name .. ". Damage is game-specific.", 3)
+        else
+            notify("Combat", "Target not found or no equipped tool.", 2)
+        end
+    end)
+    addButton(p, "Kill All NPCs", function()
+        pcall(scanWorldTargets)
+        local total = 0
+        for _, data in ipairs(WorldTargets.monsters or {}) do
+            if genericLocalStrike(data.instance) then total = total + 1 end
+        end
+        notify("Combat", "Local NPCs affected: " .. tostring(total), 2)
+    end)
+    addCheckbox(p, "Kill Aura (NPC / Tool Assist)", "KillAura", function(v)
+        killConn("KillAura")
+        if v then
+            setConn("KillAura", RunService.Heartbeat:Connect(function()
+                if not States.KillAura then killConn("KillAura") return end
+                local localRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if not localRoot then return end
+                if tick() >= nextWorldScan then
+                    nextWorldScan = tick() + 0.65
+                    pcall(scanWorldTargets)
+                end
+                local closest, closestDistance
+                for _, data in ipairs(WorldTargets.monsters or {}) do
+                    local root = data.root
+                    local d = root and (root.Position - localRoot.Position).Magnitude
+                    if d and d <= (Values.KillAuraRange or 25) and (not closestDistance or d < closestDistance) then closest, closestDistance = data.instance, d end
+                end
+                if closest then
+                    genericLocalStrike(closest)
+                else
+                    local target = findPlayerByName(Values.TargetName)
+                    local root = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+                    if root and (root.Position - localRoot.Position).Magnitude <= (Values.KillAuraRange or 25) then
+                        genericLocalStrike(target.Character)
+                    end
+                end
+            end))
+        end
+    end)
+    addSlider(p, "Kill Aura Range", "KillAuraRange", 5, 100)
+
+    addSection(p, T("Aim"))
+    addCheckbox(p, T("Aim"), "Aim", function(v)
+        updateAimRuntime()
+        if v then notify(T("Aim"), "Smooth target lock enabled", 2) end
+    end)
+    addCheckbox(p, T("SilentAim"), "SilentAim", function(v)
+        updateAimRuntime()
+        if v and not silentHookReady then
+            notify(T("SilentAim"), "Best-effort mouse fallback enabled", 2)
+        end
+    end)
+    addCheckbox(p, T("AimFOV"), "AimFOV", function(v)
+        updateAimRuntime()
+    end)
+    addCheckbox(p, T("AimPrediction"), "AimPrediction", function(v)
+        updateAimRuntime()
+    end)
+    addCheckbox(p, T("TriggerBot"), "TriggerBot", function(v)
+        killConn("TriggerBot")
+        if v then
+            setConn("TriggerBot", RunService.Heartbeat:Connect(function()
+                if not States.TriggerBot then killConn("TriggerBot") return end
+                pcall(function()
+                    local mouse = player:GetMouse()
+                    local targetPlayer = mouse.Target and Players:GetPlayerFromCharacter(mouse.Target:FindFirstAncestorOfClass("Model"))
+                    if targetPlayer and targetPlayer ~= player then
+                        if type(mouse1click) == "function" then
+                            mouse1click()
+                        elseif VirtualUser then
+                            VirtualUser:Button1Down(Vector2.new(mouse.X, mouse.Y), camera.CFrame)
+                            VirtualUser:Button1Up(Vector2.new(mouse.X, mouse.Y), camera.CFrame)
+                        end
+                    end
+                end)
+            end))
+        end
+    end)
+
+    local hitboxOriginals = {}
+    addCheckbox(p, T("HitboxExpander"), "HitboxExpander", function(v)
+        killConn("HitboxExpander")
+        if v then
+            setConn("HitboxExpander", RunService.Heartbeat:Connect(function()
+                if not States.HitboxExpander then killConn("HitboxExpander") return end
+                pcall(function()
+                    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+                        local character = targetPlayer.Character
+                        local root = character and character:FindFirstChild("HumanoidRootPart")
+                        if targetPlayer ~= player and root then
+                            if not hitboxOriginals[root] then
+                                hitboxOriginals[root] = {Size = root.Size, Transparency = root.Transparency}
+                            end
+                            root.Size = Vector3.new(Values.HitboxSize, Values.HitboxSize, Values.HitboxSize)
+                            root.Transparency = 0.5
+                        end
+                    end
+                end)
+            end))
+        else
+            pcall(function()
+                for root, original in pairs(hitboxOriginals) do
+                    pcall(function()
+                        if root and root.Parent then
+                            root.Size = original.Size
+                            root.Transparency = original.Transparency
+                        end
+                    end)
+                    hitboxOriginals[root] = nil
+                end
+            end)
+        end
+    end)
+
+    addSection(p, T("AimFOVValue"))
+    addSlider(p, T("AimFOVValue"), "AimFOVValue", 30, 360)
+    addSlider(p, T("AimSmoothness"), "AimSmoothness", 1, 100)
+    addSlider(p, T("HitboxSize"), "HitboxSize", 2, 50)
+end
+
+-- MOVEMENT TAB
+do
+    local p = pages["Movement"]
+    local function updateWalkSpeedRuntime()
+        killConn("WalkSpeedRuntime")
+        if States.Speed or States.Sprint then
+            setConn("WalkSpeedRuntime", RunService.Heartbeat:Connect(function()
+                if not States.Speed and not States.Sprint then
+                    killConn("WalkSpeedRuntime")
+                    return
+                end
+                pcall(function()
+                    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                    if not humanoid then return end
+                    local desired = 16
+                    if States.Speed then desired = math.max(desired, tonumber(Values.SpeedValue) or 16) end
+                    if States.Sprint and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                        desired = math.max(desired, tonumber(Values.SprintSpeed) or 24)
+                    end
+                    humanoid.WalkSpeed = desired
+                end)
+            end))
+        else
+            pcall(function()
+                local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then humanoid.WalkSpeed = 16 end
+            end)
+        end
+    end
+
+    addSection(p, T("Speed"))
+    addCheckbox(p, T("Speed"), "Speed", function() updateWalkSpeedRuntime() end)
+    addSlider(p, T("SpeedValue"), "SpeedValue", 16, 200)
+
+    addSection(p, T("Fly"))
+    addCheckbox(p, T("Fly"), "Fly", function(v)
+        killConn("Fly")
+        if v then
+            setConn("Fly", RunService.Heartbeat:Connect(function()
+                if not States.Fly then killConn("Fly") return end
+                pcall(function()
+                    local char = player.Character
+                    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    local activeCamera = Workspace.CurrentCamera or camera
+                    if not humanoid or not hrp or not activeCamera then return end
+                    local bodyV = hrp:FindFirstChild("FLUYEN_FlyBV")
+                    if not bodyV then
+                        bodyV = Instance.new("BodyVelocity")
+                        bodyV.Name = "FLUYEN_FlyBV"
+                        bodyV.MaxForce = Vector3.new(1000000, 1000000, 1000000)
+                        bodyV.P = 10000
+                        bodyV.Velocity = Vector3.zero
+                        bodyV.Parent = hrp
+                    end
+                    local moveDir = humanoid.MoveDirection
+                    if moveDir.Magnitude < 0.05 then
+                        local look = activeCamera.CFrame.LookVector
+                        local right = activeCamera.CFrame.RightVector
+                        local flatLook = Vector3.new(look.X, 0, look.Z)
+                        local flatRight = Vector3.new(right.X, 0, right.Z)
+                        local keyboardDir = Vector3.zero
+                        if UserInputService:IsKeyDown(Enum.KeyCode.W) then keyboardDir = keyboardDir + flatLook end
+                        if UserInputService:IsKeyDown(Enum.KeyCode.S) then keyboardDir = keyboardDir - flatLook end
+                        if UserInputService:IsKeyDown(Enum.KeyCode.A) then keyboardDir = keyboardDir - flatRight end
+                        if UserInputService:IsKeyDown(Enum.KeyCode.D) then keyboardDir = keyboardDir + flatRight end
+                        moveDir = keyboardDir
+                    end
+                    if moveDir.Magnitude > 1 then moveDir = moveDir.Unit end
+                    local vertical = 0
+                    if humanoid.Jump or UserInputService:IsKeyDown(Enum.KeyCode.Space) then vertical = vertical + 1 end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then vertical = vertical - 1 end
+                    bodyV.Velocity = moveDir * Values.FlySpeed + Vector3.new(0, vertical * Values.FlySpeed, 0)
+                end)
+            end))
+        else
+            pcall(function()
+                local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                local bv = root and root:FindFirstChild("FLUYEN_FlyBV")
+                if bv then bv:Destroy() end
+            end)
+        end
+    end)
+    addSlider(p, T("FlySpeed"), "FlySpeed", 10, 200)
+
+    local noclipOriginals = {}
+    local function restoreNoclip()
+        for part, original in pairs(noclipOriginals) do
+            pcall(function()
+                if part and part.Parent then part.CanCollide = original end
+            end)
+            noclipOriginals[part] = nil
+        end
+    end
+    addSection(p, T("Noclip"))
+    addCheckbox(p, T("Noclip"), "Noclip", function(v)
+        killConn("Noclip")
+        if v then
+            setConn("Noclip", RunService.Stepped:Connect(function()
+                if not States.Noclip then
+                    killConn("Noclip")
+                    restoreNoclip()
+                    return
+                end
+                pcall(function()
+                    if player.Character then
+                        for _, part in ipairs(player.Character:GetDescendants()) do
+                            if part:IsA("BasePart") then
+                                if noclipOriginals[part] == nil then noclipOriginals[part] = part.CanCollide end
+                                part.CanCollide = false
+                            end
+                        end
+                    end
+                end)
+            end))
+        else
+            restoreNoclip()
+        end
+    end)
+
+    addSection(p, T("JumpPower"))
+    addCheckbox(p, T("JumpPower"), "JumpPower", function(v)
+        killConn("JumpPower")
+        if v then
+            setConn("JumpPower", RunService.RenderStepped:Connect(function()
+                if not States.JumpPower then killConn("JumpPower") return end
+                pcall(function()
+                    if player.Character and player.Character:FindFirstChild("Humanoid") then
+                        player.Character.Humanoid.JumpPower = Values.JumpPowerValue
+                    end
+                end)
+            end))
+        else
+            pcall(function()
+                if player.Character and player.Character:FindFirstChild("Humanoid") then
+                    player.Character.Humanoid.JumpPower = 50
+                end
+            end)
+        end
+    end)
+    addSlider(p, T("JumpPowerValue"), "JumpPowerValue", 50, 500)
+
+    addSection(p, T("InfiniteJump"))
+    addCheckbox(p, T("InfiniteJump"), "InfiniteJump", function(v)
+        killConn("InfJump")
+        if v then
+            setConn("InfJump", UserInputService.JumpRequest:Connect(function()
+                if States.InfiniteJump then
+                    pcall(function()
+                        if player.Character and player.Character:FindFirstChild("Humanoid") then
+                            player.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                        end
+                    end)
+                end
+            end))
+        end
+    end)
+
+    addSection(p, T("Teleport"))
+    addButton(p, T("Teleport"), function()
+        pcall(function()
+            if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local mouse = player:GetMouse()
+                if mouse.Hit then
+                    player.Character.HumanoidRootPart.CFrame = mouse.Hit + Vector3.new(0, 3, 0)
+                end
+            end
+        end)
+    end)
+
+    addCheckbox(p, T("ClickTeleport"), "ClickTeleport", function(v)
+        killConn("ClickTP")
+        if v then
+            setConn("ClickTP", UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if gameProcessed then return end
+                if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and States.ClickTeleport then
+                    pcall(function()
+                        local mouse = player:GetMouse()
+                        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                        if root and mouse.Hit then root.CFrame = mouse.Hit + Vector3.new(0, 3, 0) end
+                    end)
+                end
+            end))
+        end
+    end)
+
+    addSection(p, T("Sprint"))
+    addCheckbox(p, T("Sprint"), "Sprint", function() updateWalkSpeedRuntime() end)
+    addSlider(p, T("SprintSpeed"), "SprintSpeed", 20, 100)
+
+    addSection(p, T("AntiVoid"))
+    addCheckbox(p, T("AntiVoid"), "AntiVoid", function(v)
+        killConn("AntiVoid")
+        if v then
+            setConn("AntiVoid", RunService.RenderStepped:Connect(function()
+                if not States.AntiVoid then killConn("AntiVoid") return end
+                pcall(function()
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        if player.Character.HumanoidRootPart.Position.Y < -10 then
+                            player.Character.HumanoidRootPart.CFrame = CFrame.new(player.Character.HumanoidRootPart.Position.X, 10, player.Character.HumanoidRootPart.Position.Z)
+                        end
+                    end
+                end)
+            end))
+        end
+    end)
+end
+
+-- UTILITY TAB
+do
+    local p = pages["Utility"]
+    addSection(p, T("AntiAFK"))
+    addCheckbox(p, T("AntiAFK"), "AntiAFK", function(v)
+        killConn("AntiAFK")
+        if v then
+            setConn("AntiAFK", player.Idled:Connect(function()
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new(0,0))
+                end)
+            end))
+        end
+    end)
+
+    addSection(p, T("FreezeTime"))
+    addCheckbox(p, T("FreezeTime"), "FreezeTime", function(v)
+        killConn("FreezeTime")
+        if v then
+            setConn("FreezeTime", RunService.RenderStepped:Connect(function()
+                if not States.FreezeTime then killConn("FreezeTime") return end
+                pcall(function()
+                    Lighting.ClockTime = 14
+                end)
+            end))
+        end
+    end)
+
+    local fpsOriginals = {}
+    local fpsQuality = nil
+    addSection(p, T("FPSBoost"))
+    addCheckbox(p, T("FPSBoost"), "FPSBoost", function(v)
+        if v then
+            pcall(function()
+                fpsQuality = settings().Rendering.QualityLevel
+                settings().Rendering.QualityLevel = 1
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA("Texture") or obj:IsA("Decal") then
+                        fpsOriginals[obj] = {kind = "transparency", value = obj.Transparency}
+                        obj.Transparency = 1
+                    elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") then
+                        fpsOriginals[obj] = {kind = "enabled", value = obj.Enabled}
+                        obj.Enabled = false
+                    end
+                end
+            end)
+            notify(T("FPSBoost"), "Enabled - graphics reduced", 2)
+        else
+            pcall(function()
+                if fpsQuality then settings().Rendering.QualityLevel = fpsQuality end
+                for obj, original in pairs(fpsOriginals) do
+                    if obj and obj.Parent then
+                        if original.kind == "transparency" then obj.Transparency = original.value else obj.Enabled = original.value end
+                    end
+                    fpsOriginals[obj] = nil
+                end
+                fpsQuality = nil
+            end)
+            notify(T("FPSBoost"), "Disabled", 2)
+        end
+    end)
+end
+
+-- SERVER TAB
+do
+    local p = pages["Server"]
+    addSection(p, T("RejoinServer"))
+    addButton(p, T("RejoinServer"), function()
+        notify(T("RejoinServer"), "Rejoining...", 2)
+        pcall(function()
+            game:GetService("TeleportService"):Teleport(game.PlaceId, player)
+        end)
+    end)
+
+    addButton(p, T("ServerHop"), function()
+        notify(T("ServerHop"), "Finding server...", 2)
+        pcall(function()
+            local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+            local response = game:HttpGet(url)
+            local servers = HttpService:JSONDecode(response)
+            if servers and servers.data then
+                for _, server in ipairs(servers.data) do
+                    if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, server.id, player)
+                        return
+                    end
+                end
+            end
+        end)
+        notify(T("ServerHop"), "Failed - try again", 3)
+    end)
+
+    addButton(p, T("JoinSmallServer"), function()
+        notify(T("JoinSmallServer"), "Finding small server...", 2)
+        pcall(function()
+            local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+            local response = game:HttpGet(url)
+            local servers = HttpService:JSONDecode(response)
+            if servers and servers.data then
+                local smallest = nil
+                for _, server in ipairs(servers.data) do
+                    if server.id ~= game.JobId then
+                        if not smallest or server.playing < smallest.playing then
+                            smallest = server
+                        end
+                    end
+                end
+                if smallest then
+                    game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, smallest.id, player)
+                end
+            end
+        end)
+        notify(T("JoinSmallServer"), "Failed - try again", 3)
+    end)
+
+    addSection(p, T("PlayerList"))
+    -- Player list dropdown for spectate
+    local function getPlayerNames()
+        local names = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then table.insert(names, p.Name) end
+        end
+        return names
+    end
+
+    local spectateDropdown
+    local spectateNames = getPlayerNames()
+    if #spectateNames > 0 then
+        spectateDropdown = addDropdown(p, T("SpectatePlayer"), spectateNames, function(selected)
+            killConn("Spectate")
+            local target = Players:FindFirstChild(selected)
+            if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                setConn("Spectate", RunService.RenderStepped:Connect(function()
+                    if not target or not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then
+                        killConn("Spectate")
+                        return
+                    end
+                    camera.CameraSubject = target.Character:FindFirstChild("Humanoid")
+                end))
+                notify(T("SpectatePlayer"), "Spectating " .. selected, 2)
+            end
+        end)
+    else
+        addInfoRow(p, T("PlayerList"), "No other players")
+    end
+
+    addButton(p, "Stop Spectate", function()
+        killConn("Spectate")
+        pcall(function()
+            if player.Character and player.Character:FindFirstChild("Humanoid") then
+                camera.CameraSubject = player.Character.Humanoid
+            end
+        end)
+        notify(T("SpectatePlayer"), "Stopped", 2)
+    end)
+end
+
+-- FUN TAB
+do
+    local p = pages["Fun"]
+
+    addSection(p, T("Spin"))
+    addCheckbox(p, T("Spin"), "Spin", function(v)
+        killConn("Spin")
+        if v then
+            setConn("Spin", RunService.RenderStepped:Connect(function()
+                if not States.Spin then killConn("Spin") return end
+                pcall(function()
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        player.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame * CFrame.Angles(0, math.rad(Values.SpinSpeed), 0)
+                    end
+                end)
+            end))
+        end
+    end)
+    addSlider(p, T("SpinSpeed"), "SpinSpeed", 1, 100)
+
+    addSection(p, T("Float"))
+    addCheckbox(p, T("Float"), "Float", function(v)
+        killConn("Float")
+        if v then
+            setConn("Float", RunService.RenderStepped:Connect(function()
+                if not States.Float then killConn("Float") return end
+                pcall(function()
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        player.Character.HumanoidRootPart.CFrame = CFrame.new(
+                            player.Character.HumanoidRootPart.Position.X,
+                            player.Character.HumanoidRootPart.Position.Y + math.sin(tick() * 2) * 0.5,
+                            player.Character.HumanoidRootPart.Position.Z
+                        )
+                    end
+                end)
+            end))
+        end
+    end)
+
+    addSection(p, T("Bang"))
+    addCheckbox(p, T("Bang"), "Bang", function(v)
+        killConn("Bang")
+        if v then
+            setConn("Bang", RunService.RenderStepped:Connect(function()
+                if not States.Bang then killConn("Bang") return end
+                pcall(function()
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        player.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame * CFrame.new(0, math.sin(tick() * 10) * 0.3, 0)
+                    end
+                end)
+            end))
+        end
+    end)
+
+    addSection(p, T("Fling"))
+    addButton(p, T("Fling"), function()
+        pcall(function()
+            if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                player.Character.HumanoidRootPart.Velocity = Vector3.new(math.random(-500,500), math.random(200,500), math.random(-500,500))
+            end
+        end)
+    end)
+
+    addSection(p, T("OrbitPlayer"))
+    local orbitTarget = nil
+    local orbitPlayers = {}
+    for _, p2 in ipairs(Players:GetPlayers()) do
+        if p2 ~= player then table.insert(orbitPlayers, p2.Name) end
+    end
+    if #orbitPlayers > 0 then
+        addDropdown(p, T("OrbitPlayer"), orbitPlayers, function(selected)
+            orbitTarget = Players:FindFirstChild(selected)
+        end)
+    end
+
+    addCheckbox(p, "Orbit Active", "Orbit", function(v)
+        killConn("Orbit")
+        if v and orbitTarget then
+            setConn("Orbit", RunService.RenderStepped:Connect(function()
+                if not orbitTarget or not orbitTarget.Character or not orbitTarget.Character:FindFirstChild("HumanoidRootPart") then
+                    killConn("Orbit") return
+                end
+                pcall(function()
+                    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                        local offset = CFrame.new(Values.OrbitRadius, 0, 0)
+                        local angle = CFrame.Angles(0, math.rad(tick() * Values.OrbitSpeed * 50 % 360), 0)
+                        player.Character.HumanoidRootPart.CFrame = orbitTarget.Character.HumanoidRootPart.CFrame * angle * offset
+                    end
+                end)
+            end))
+        end
+    end)
+    addSlider(p, T("OrbitRadius"), "OrbitRadius", 1, 20)
+    addSlider(p, T("OrbitSpeed"), "OrbitSpeed", 1, 20)
+
+    local invisibleOriginals = {}
+    addSection(p, T("Invisible"))
+    addCheckbox(p, T("Invisible"), "Invisible", function(v)
+        pcall(function()
+            if player.Character then
+                for _, part in ipairs(player.Character:GetDescendants()) do
+                    if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
+                        if invisibleOriginals[part] == nil then invisibleOriginals[part] = part.Transparency end
+                        part.Transparency = v and 1 or (invisibleOriginals[part] or 0)
+                    end
+                end
+            end
+            if not v then
+                for part, original in pairs(invisibleOriginals) do
+                    pcall(function()
+                        if part and part.Parent then part.Transparency = original end
+                    end)
+                    invisibleOriginals[part] = nil
+                end
+            end
+        end)
+    end)
+end
+
+-- SETTINGS TAB
+do
+    local p = pages["Settings"]
+
+    addSection(p, "ACCESS CONTROL")
+    local accessCard = makeCard(p, 132)
+    local accessTitle = Instance.new("TextLabel")
+    accessTitle.Size = UDim2.new(1, -28, 0, 18)
+    accessTitle.Position = UDim2.new(0, 14, 0, 8)
+    accessTitle.BackgroundTransparency = 1
+    accessTitle.Text = "Premium access key"
+    accessTitle.TextColor3 = getTheme().text
+    accessTitle.Font = Enum.Font.GothamBold
+    accessTitle.TextSize = 11
+    accessTitle.TextXAlignment = Enum.TextXAlignment.Left
+    accessTitle.ZIndex = 8
+    accessTitle.Parent = accessCard
+    accessRoleLabel = Instance.new("TextLabel")
+    accessRoleLabel.Size = UDim2.new(1, -28, 0, 12)
+    accessRoleLabel.Position = UDim2.new(0, 14, 0, 24)
+    accessRoleLabel.BackgroundTransparency = 1
+    accessRoleLabel.Text = "ROLE: GUEST  •  MODULES STANDBY"
+    accessRoleLabel.TextColor3 = getTheme().textDim
+    accessRoleLabel.Font = Enum.Font.GothamMedium
+    accessRoleLabel.TextSize = 8
+    accessRoleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    accessRoleLabel.ZIndex = 8
+    accessRoleLabel.Parent = accessCard
+    keyInputBox = Instance.new("TextBox")
+    keyInputBox.Size = UDim2.new(0.62, -8, 0, 30)
+    keyInputBox.Position = UDim2.new(0, 14, 0, 42)
+    keyInputBox.BackgroundColor3 = getTheme().dropdownBg
+    keyInputBox.BorderSizePixel = 0
+    keyInputBox.PlaceholderText = "Enter access key"
+    keyInputBox.PlaceholderColor3 = getTheme().textDim
+    keyInputBox.Text = ""
+    keyInputBox.ClearTextOnFocus = false
+    keyInputBox.TextColor3 = getTheme().text
+    keyInputBox.Font = Enum.Font.GothamMedium
+    keyInputBox.TextSize = 11
+    keyInputBox.TextXAlignment = Enum.TextXAlignment.Left
+    keyInputBox.ZIndex = 9
+    keyInputBox.Parent = accessCard
+    keyInputBox:SetAttribute("FLUYENRole", "dropdown")
+    local keyPad = Instance.new("UIPadding")
+    keyPad.PaddingLeft = UDim.new(0, 10)
+    keyPad.Parent = keyInputBox
+    Instance.new("UICorner", keyInputBox).CornerRadius = UDim.new(0, 7)
+    local verifyKey = Instance.new("TextButton")
+    verifyKey.Size = UDim2.new(0.38, -20, 0, 30)
+    verifyKey.Position = UDim2.new(0.62, 6, 0, 42)
+    verifyKey.BackgroundColor3 = getTheme().accent
+    verifyKey.BorderSizePixel = 0
+    verifyKey.Text = "UNLOCK"
+    verifyKey.TextColor3 = Color3.fromRGB(255, 255, 255)
+    verifyKey.Font = Enum.Font.GothamBold
+    verifyKey.TextSize = 10
+    verifyKey.AutoButtonColor = false
+    verifyKey.ZIndex = 9
+    verifyKey.Parent = accessCard
+    verifyKey:SetAttribute("FLUYENRole", "accentButton")
+    Instance.new("UICorner", verifyKey).CornerRadius = UDim.new(0, 7)
+    keyStatusLabel = Instance.new("TextLabel")
+    keyStatusLabel.Size = UDim2.new(1, -28, 0, 18)
+    keyStatusLabel.Position = UDim2.new(0, 14, 1, -25)
+    keyStatusLabel.BackgroundTransparency = 1
+    keyStatusLabel.Text = "ACCESS LOCKED  /  ENTER KEY TO CONTINUE"
+    keyStatusLabel.TextColor3 = getTheme().textDim
+    keyStatusLabel.Font = Enum.Font.GothamMedium
+    keyStatusLabel.TextSize = 9
+    keyStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    keyStatusLabel.ZIndex = 8
+    keyStatusLabel.Parent = accessCard
+    verifyKey.Activated:Connect(function()
+        local entered = tostring(keyInputBox.Text or "")
+        if entered == ADMIN_KEY or entered == FREE_KEY then
+            KeyAuthenticated = true
+            AdminAuthenticated = entered == ADMIN_KEY
+            AccessLevel = AdminAuthenticated and "ADMIN" or "FREE"
+            updateAuthUi()
+            updateAccessVisibility()
+            refreshCheckboxes()
+            replayActiveStateCallbacks()
+            notify("FLUYEN ACCESS", AdminAuthenticated and "Admin key accepted. Report console enabled." or "Free key accepted. Standard modules unlocked.", 3)
+            selectTab(AdminAuthenticated and "Admin" or "Home")
+        else
+            KeyAuthenticated = false
+            AdminAuthenticated = false
+            AccessLevel = "LOCKED"
+            for stateKey, _ in pairs(States) do
+                if stateKey ~= "MinimizeButton" and stateKey ~= "DraggableGUI" and stateKey ~= "Notifications" then States[stateKey] = false end
+            end
+            refreshCheckboxes()
+            replayActiveStateCallbacks()
+            updateAuthUi()
+            updateAccessVisibility()
+            keyInputBox.Text = ""
+            notify("FLUYEN ACCESS", "Invalid key. Modules locked.", 3)
+        end
+    end)
+    addButton(p, "Lock Modules", function()
+        KeyAuthenticated = false
+        AdminAuthenticated = false
+        AccessLevel = "LOCKED"
+        updateAuthUi()
+        updateAccessVisibility()
+        for stateKey, _ in pairs(States) do
+            if stateKey ~= "MinimizeButton" and stateKey ~= "DraggableGUI" and stateKey ~= "Notifications" then States[stateKey] = false end
+        end
+        refreshCheckboxes()
+        replayActiveStateCallbacks()
+        selectTab("Settings")
+        notify("FLUYEN ACCESS", "Modules locked.", 2)
+    end)
+
+    addSection(p, "REPORT A BUG")
+    local reportCard = makeCard(p, 142)
+    local reportBox = Instance.new("TextBox")
+    reportBox.Size = UDim2.new(1, -28, 0, 58)
+    reportBox.Position = UDim2.new(0, 14, 0, 10)
+    reportBox.BackgroundColor3 = getTheme().dropdownBg
+    reportBox.BorderSizePixel = 0
+    reportBox.PlaceholderText = "Describe the problem, tab and steps to reproduce..."
+    reportBox.PlaceholderColor3 = getTheme().textDim
+    reportBox.Text = ""
+    reportBox.TextColor3 = getTheme().text
+    reportBox.Font = Enum.Font.GothamMedium
+    reportBox.TextSize = 9
+    reportBox.TextWrapped = true
+    reportBox.TextXAlignment = Enum.TextXAlignment.Left
+    reportBox.TextYAlignment = Enum.TextYAlignment.Top
+    pcall(function() reportBox.MultiLine = true end)
+    reportBox.ClearTextOnFocus = false
+    reportBox.ZIndex = 9
+    reportBox.Parent = reportCard
+    reportBox:SetAttribute("FLUYENRole", "dropdown")
+    local reportPad = Instance.new("UIPadding")
+    reportPad.PaddingLeft = UDim.new(0, 9)
+    reportPad.PaddingRight = UDim.new(0, 9)
+    reportPad.PaddingTop = UDim.new(0, 7)
+    reportPad.Parent = reportBox
+    Instance.new("UICorner", reportBox).CornerRadius = UDim.new(0, 8)
+    local reportStatus = Instance.new("TextLabel")
+    reportStatus.Size = UDim2.new(1, -160, 0, 22)
+    reportStatus.Position = UDim2.new(0, 14, 1, -28)
+    reportStatus.BackgroundTransparency = 1
+    reportStatus.Text = "Local inbox adapter ready"
+    reportStatus.TextColor3 = getTheme().textDim
+    reportStatus.Font = Enum.Font.GothamMedium
+    reportStatus.TextSize = 8
+    reportStatus.TextXAlignment = Enum.TextXAlignment.Left
+    reportStatus.ZIndex = 9
+    reportStatus.Parent = reportCard
+    local sendReport = Instance.new("TextButton")
+    sendReport.Size = UDim2.new(0, 126, 0, 24)
+    sendReport.Position = UDim2.new(1, -140, 1, -30)
+    sendReport.BackgroundColor3 = getTheme().accent
+    sendReport.BorderSizePixel = 0
+    sendReport.Text = "SEND REPORT"
+    sendReport.TextColor3 = Color3.fromRGB(255,255,255)
+    sendReport.Font = Enum.Font.GothamBold
+    sendReport.TextSize = 8
+    sendReport.AutoButtonColor = false
+    sendReport.ZIndex = 9
+    sendReport.Parent = reportCard
+    sendReport:SetAttribute("FLUYENRole", "accentButton")
+    Instance.new("UICorner", sendReport).CornerRadius = UDim.new(0, 7)
+    sendReport.Activated:Connect(function()
+        local body = tostring(reportBox.Text or "")
+        body = string.gsub(body, "^%s*(.-)%s*$", "%1")
+        if body == "" then
+            reportStatus.Text = "Write a report first."
+            return
+        end
+        ReportSequence = ReportSequence + 1
+        table.insert(ReportInbox, {id=ReportSequence, body=body, author=player.Name, role=AccessLevel, time=os.date("%H:%M:%S")})
+        reportBox.Text = ""
+        reportStatus.Text = "Saved as local report #" .. tostring(ReportSequence) .. "."
+        notify("REPORT", "Report saved locally. A server adapter is required for cross-session admin delivery.", 4)
+        if refreshAdminInbox then refreshAdminInbox() end
+    end)
+
+    -- Theme section
+    addSection(p, T("Theme"))
+    addDropdown(p, T("Theme"), {"Dark", "Light", "Sky Blue", "Galaxy", "Neon"}, function(selected)
+        local themeMap = {Dark="Dark", Light="Light", ["Sky Blue"]="SkyBlue", Galaxy="Galaxy", Neon="Neon"}
+        currentTheme = themeMap[selected] or "Dark"
+        pcall(applyTheme)
+        notify(T("Theme"), selected .. " theme applied", 2)
+    end)
+
+    -- Language section
+    addSection(p, T("Language"))
+    addDropdown(p, T("Language"), {"English", "Tieng Viet", "Espanol", "Portugues", "Russkiy"}, function(selected)
+        local langMap = {English="EN", ["Tieng Viet"]="VI", ["Espanol"]="ES", ["Portugues"]="PT", ["Russkiy"]="RU"}
+        currentLang = langMap[selected] or "EN"
+        pcall(applyLanguage)
+        notify(T("Language"), "Language: " .. selected, 2)
+    end)
+
+    -- GUI section
+    addSection(p, T("GUI"))
+    addCheckbox(p, T("AutoLoadSettings"), "AutoLoadSettings")
+    addCheckbox(p, T("MinimizeButton"), "MinimizeButton", function(v)
+        miniBtn.Visible = v and not isOpen
+    end)
+    addCheckbox(p, T("DraggableGUI"), "DraggableGUI")
+    addCheckbox(p, T("Notifications"), "Notifications")
+
+    -- Save/Load/Reset
+    addSection(p, T("SaveSettings"))
+    addButton(p, T("SaveSettings"), function()
+        pcall(function()
+            local settings = {
+                theme = currentTheme,
+                language = currentLang,
+                states = States,
+                values = Values,
+            }
+            writefile("FLUYEN_settings.json", HttpService:JSONEncode(settings))
+            notify(T("SaveSettings"), "Settings saved!", 2)
+        end)
+    end)
+
+    addButton(p, T("ResetSettings"), function()
+        -- Reset all states to their startup defaults.
+        for k, v in pairs(DefaultStates) do States[k] = v end
+        Values.SpeedValue = 16
+        Values.FlySpeed = 50
+        Values.JumpPowerValue = 50
+        Values.SprintSpeed = 24
+        Values.SpinSpeed = 10
+        Values.AimFOVValue = 90
+        Values.AimSmoothness = 50
+        Values.HitboxSize = 10
+        Values.OrbitRadius = 5
+        Values.OrbitSpeed = 1
+        currentTheme = "Dark"
+        currentLang = "EN"
+        refreshCheckboxes()
+        pcall(applyTheme)
+        pcall(applyLanguage)
+        pcall(replayActiveStateCallbacks)
+        notify(T("ResetSettings"), "Settings reset!", 2)
+    end)
+
+    -- Keybind info
+    addSection(p, T("ToggleKeybind"))
+    addInfoRow(p, T("ToggleKeybind"), "3-finger tap x3")
+end
+
+-- ============================================================
+-- GESTURE: 3 FINGERS x 3 TAPS (Mobile toggle)
+-- ============================================================
+local REQUIRED_FINGERS = 3
+local REQUIRED_TAPS = 3
+local TAP_WINDOW = 1.5
+
+local activeTouches = {}
+local activeCount = 0
+local reachedRequired = false
+local tapCount = 0
+local lastTapTime = 0
+
+local function onGestureTap()
+    local now = tick()
+    if now - lastTapTime > TAP_WINDOW then tapCount = 0 end
+    tapCount = tapCount + 1
+    lastTapTime = now
+    if tapCount >= REQUIRED_TAPS then
+        tapCount = 0
+        toggleMenu()
+    end
+end
+
+UserInputService.TouchStarted:Connect(function(touch, gameProcessedEvent)
+    if gameProcessedEvent then return end
+    activeTouches[touch] = true
+    activeCount = activeCount + 1
+    if activeCount == REQUIRED_FINGERS and not reachedRequired then
+        reachedRequired = true
+        onGestureTap()
+    end
+end)
+
+UserInputService.TouchEnded:Connect(function(touch, gameProcessedEvent)
+    if activeTouches[touch] then
+        activeTouches[touch] = nil
+        activeCount = math.max(0, activeCount - 1)
+    end
+    if activeCount < REQUIRED_FINGERS then
+        reachedRequired = false
+    end
+end)
+
+-- Keyboard toggle (Insert key for PC)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Insert then
+        toggleMenu()
+    end
+end)
+
+-- ============================================================
+-- AUTO LOAD SETTINGS
+-- ============================================================
+_spawn(function()
+    _wait(2)
+    local success, data = pcall(function()
+        return readfile("FLUYEN_settings.json")
+    end)
+    if success and data then
+        pcall(function()
+            local settings = HttpService:JSONDecode(data)
+            if settings and settings.states and settings.states.AutoLoadSettings then
+                if settings.theme then currentTheme = settings.theme end
+                if settings.language then currentLang = settings.language end
+                if settings.values then
+                    for k, v in pairs(settings.values) do
+                        if k == "AimSmoothness" and tonumber(v) and tonumber(v) < 1 then v = tonumber(v) * 100 end
+                        Values[k] = v
+                    end
+                end
+                if settings.states then
+                    for k, v in pairs(settings.states) do States[k] = v end
+                end
+                refreshCheckboxes()
+                pcall(applyTheme)
+                pcall(applyLanguage)
+                if KeyAuthenticated then pcall(replayActiveStateCallbacks) end
+                notify("Auto Load", "Settings loaded. Enter key to unlock modules.", 2)
+            end
+        end)
+    end
+end)
+
+-- ============================================================
+end
+
+pcall(function()
+-- ADMIN REPORT CONSOLE (local runtime inbox; connect an approved backend adapter for cross-session reports).
+do
+    local adminPage = pages["Admin"]
+    addSection(adminPage, "ADMIN REPORT CONSOLE")
+    local adminInfo = Instance.new("TextLabel")
+    adminInfo.Size = UDim2.new(1, 0, 0, 32)
+    adminInfo.BackgroundTransparency = 1
+    adminInfo.Text = "Only the khanhhuy admin key can open this tab. Reports shown here are from the current runtime."
+    adminInfo.TextColor3 = getTheme().textDim
+    adminInfo.Font = Enum.Font.GothamMedium
+    adminInfo.TextSize = 9
+    adminInfo.TextWrapped = true
+    adminInfo.TextXAlignment = Enum.TextXAlignment.Left
+    adminInfo.ZIndex = 8
+    adminInfo.Parent = adminPage
+    local inboxCard = makeCard(adminPage, 230)
+    local inboxTitle = Instance.new("TextLabel")
+    inboxTitle.Size = UDim2.new(1, -28, 0, 20)
+    inboxTitle.Position = UDim2.new(0, 14, 0, 10)
+    inboxTitle.BackgroundTransparency = 1
+    inboxTitle.Text = "INBOX  /  0 REPORTS"
+    inboxTitle.TextColor3 = getTheme().accent
+    inboxTitle.Font = Enum.Font.GothamBlack
+    inboxTitle.TextSize = 11
+    inboxTitle.TextXAlignment = Enum.TextXAlignment.Left
+    inboxTitle.ZIndex = 9
+    inboxTitle.Parent = inboxCard
+    local inboxList = Instance.new("ScrollingFrame")
+    inboxList.Name = "ReportList"
+    inboxList.Size = UDim2.new(1, -28, 1, -44)
+    inboxList.Position = UDim2.new(0, 14, 0, 36)
+    inboxList.BackgroundTransparency = 1
+    inboxList.BorderSizePixel = 0
+    inboxList.ScrollBarThickness = 3
+    inboxList.ScrollBarImageColor3 = getTheme().accent
+    inboxList.CanvasSize = UDim2.new(0, 0, 0, 0)
+    inboxList.ZIndex = 9
+    inboxList.Parent = inboxCard
+    local inboxLayout = Instance.new("UIListLayout")
+    inboxLayout.Padding = UDim.new(0, 6)
+    inboxLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    inboxLayout.Parent = inboxList
+    local inboxPad = Instance.new("UIPadding")
+    inboxPad.PaddingBottom = UDim.new(0, 6)
+    inboxPad.Parent = inboxList
+    refreshAdminInbox = function()
+        if not inboxList or not inboxList.Parent then return end
+        for _, child in ipairs(inboxList:GetChildren()) do
+            if child:IsA("Frame") then child:Destroy() end
+        end
+        inboxTitle.Text = "INBOX  /  " .. tostring(#ReportInbox) .. " REPORTS"
+        for index, report in ipairs(ReportInbox) do
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, 0, 0, 58)
+            row.BackgroundColor3 = getTheme().dropdownBg
+            row.BorderSizePixel = 0
+            row.LayoutOrder = index
+            row.ZIndex = 10
+            row.Parent = inboxList
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+            local rowText = Instance.new("TextLabel")
+            rowText.Size = UDim2.new(1, -18, 1, -10)
+            rowText.Position = UDim2.new(0, 9, 0, 5)
+            rowText.BackgroundTransparency = 1
+            rowText.Text = "#" .. tostring(report.id) .. "  " .. tostring(report.time) .. "  /  " .. tostring(report.author) .. "\n" .. tostring(report.body)
+            rowText.TextColor3 = getTheme().text
+            rowText.Font = Enum.Font.GothamMedium
+            rowText.TextSize = 8
+            rowText.TextWrapped = true
+            rowText.TextXAlignment = Enum.TextXAlignment.Left
+            rowText.TextYAlignment = Enum.TextYAlignment.Top
+            rowText.ZIndex = 11
+            rowText.Parent = row
+        end
+        inboxList.CanvasSize = UDim2.new(0, 0, 0, inboxLayout.AbsoluteContentSize.Y + 8)
+    end
+    addButton(adminPage, "REFRESH REPORT INBOX", function() refreshAdminInbox(); notify("ADMIN", "Report inbox refreshed.", 2) end)
+    addButton(adminPage, "CLEAR LOCAL INBOX", function() ReportInbox = {}; refreshAdminInbox(); notify("ADMIN", "Local report inbox cleared.", 2) end)
+    refreshAdminInbox()
+end
+end)
+
+-- DEVICE AND BATTERY TELEMETRY
+local deviceAccumulator = 0
+local function resolveDeviceName()
+    local touch = pcall(function() return UserInputService.TouchEnabled end) and UserInputService.TouchEnabled
+    local keyboard = pcall(function() return UserInputService.KeyboardEnabled end) and UserInputService.KeyboardEnabled
+    local gamepad = pcall(function() return UserInputService.GamepadEnabled end) and UserInputService.GamepadEnabled
+    if gamepad and not keyboard then return "CONSOLE" end
+    if touch and keyboard then return "TABLET" end
+    if touch then return "MOBILE" end
+    return "PC"
+end
+local function resolveBattery()
+    local ok, level = pcall(function() return UserInputService:GetBatteryLevel() end)
+    if ok and type(level) == "number" then
+        local pct = math.floor(level * 100 + 0.5)
+        if pct < 0 then pct = 0 end
+        if pct > 100 then pct = 100 end
+        return tostring(pct) .. "%"
+    end
+    return "N/A"
+end
+pcall(function() setConn("DeviceTelemetry", RunService.Heartbeat:Connect(function(dt)
+    deviceAccumulator = deviceAccumulator + dt
+    if deviceAccumulator < 1 then return end
+    deviceAccumulator = 0
+    if deviceLabel and deviceLabel.Parent then deviceLabel.Text = "DEVICE  /  " .. resolveDeviceName() end
+    if batteryLabel and batteryLabel.Parent then batteryLabel.Text = "BATTERY  /  " .. resolveBattery() end
+end)) end)
+
+-- INITIAL RECALC & NOTIFICATION
+-- ============================================================
+pcall(recalcAllPages)
+pcall(updateAuthUi)
+pcall(function() selectTab("Settings") end)
+pcall(function() _delay(0.12, function() pcall(openMenu) end) end)
+
+-- Show minimize button after short delay
+_delay(0.5, function()
+    if States.MinimizeButton and not isOpen then
+        miniBtn.Visible = true
+    end
+end)
+
+-- Notification after load
+_spawn(function()
+    _wait(1)
+    notify(SCRIPT_NAME, SCRIPT_VERSION .. " loaded! 3-finger tap x3 to open", 4)
+end)
+
+-- End of main pcall
+end)
+
+-- ============================================================
+-- ERROR HANDLER
+-- ============================================================
+if not _ok then
+    warn('[FLUYEN] Script error: ' .. tostring(_err))
+    pcall(function()
+        local pg = game:GetService('Players').LocalPlayer:FindFirstChild('PlayerGui')
+        if pg then
+            local sg = Instance.new('ScreenGui')
+            sg.Name = 'FLUYEN_Error'
+            sg.ResetOnSpawn = false
+            sg.Parent = pg
+            local tl = Instance.new('TextLabel')
+            tl.Size = UDim2.new(0.8, 0, 0, 60)
+            tl.Position = UDim2.new(0.1, 0, 0.1, 0)
+            tl.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+            tl.Font = Enum.Font.GothamBold
+            tl.TextSize = 12
+            tl.TextWrapped = true
+            tl.Text = '[FLUYEN Error] ' .. tostring(_err)
+            tl.Parent = sg
+            local cn = Instance.new('UICorner')
+            cn.CornerRadius = UDim.new(0, 6)
+            cn.Parent = tl
+        end
+    end)
+else
+    print('[FLUYEN] Script loaded successfully!')
+end
